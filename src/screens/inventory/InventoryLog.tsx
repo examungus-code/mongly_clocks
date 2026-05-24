@@ -26,6 +26,7 @@ export function InventoryLog() {
   );
   const products = useLiveQuery(() => db.products.toArray());
   const lineItems = useLiveQuery(() => db.line_items.toArray());
+  const categories = useLiveQuery(() => db.categories.toArray());
 
   const [reasonFilter, setReasonFilter] = useState<AdjustmentReason | ''>('');
   const [productFilter, setProductFilter] = useState<ID | ''>('');
@@ -33,6 +34,32 @@ export function InventoryLog() {
     useState<InventoryAdjustment | null>(null);
 
   const productName = (id: ID) => products?.find((p) => p.id === id)?.name ?? id;
+
+  // Precompute "Necklaces / Metal / Vintage" for each category so we don't
+  // walk parents per render row.
+  const categoryPath = useMemo(() => {
+    const byId = new Map<ID, { name: string; parent_id: ID | null }>();
+    for (const c of categories ?? []) {
+      byId.set(c.id, { name: c.name, parent_id: c.parent_id });
+    }
+    const cache = new Map<ID, string>();
+    function pathOf(id: ID | null): string {
+      if (!id) return '';
+      const hit = cache.get(id);
+      if (hit !== undefined) return hit;
+      const cat = byId.get(id);
+      if (!cat) return '';
+      const parentPath = pathOf(cat.parent_id);
+      const full = parentPath ? `${parentPath} / ${cat.name}` : cat.name;
+      cache.set(id, full);
+      return full;
+    }
+    return (product_id: ID): string => {
+      const product = products?.find((p) => p.id === product_id);
+      if (!product) return '';
+      return pathOf(product.category_id);
+    };
+  }, [categories, products]);
 
   // For a sold adjustment, find the matching line item to recover the subtype
   // snapshot stored at sale time. Adjustments don't carry subtype themselves
@@ -110,6 +137,11 @@ export function InventoryLog() {
                 className="p-3 grid grid-cols-[1fr_auto_auto] gap-3 items-center text-sm"
               >
                 <div className="min-w-0">
+                  {categoryPath(a.product_id) && (
+                    <div className="text-[11px] text-walnut/50 truncate">
+                      {categoryPath(a.product_id)}
+                    </div>
+                  )}
                   <div className="font-ui truncate">
                     {productName(a.product_id)}
                     {subtype && (
