@@ -1,10 +1,11 @@
-// Sell screen — booth optimized. Photo-tile grid, text search, tap product for
-// action sheet.
+// Sell screen — booth optimized. Drill-down navigation through categories
+// (like a file system), with text search that overrides the hierarchy by
+// showing a flat list of matches across all categories.
 
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type Product } from '../../db/schema';
+import { db, type Category, type ID, type Product } from '../../db/schema';
 import { PhotoImg } from '../../components/PhotoImg';
 import { fmtCurrency } from '../../utils/format';
 import { ProductActionSheet } from './ProductActionSheet';
@@ -16,19 +17,72 @@ export function Sell() {
   const products = useLiveQuery(() =>
     db.products.filter((p) => !p.archived).toArray()
   );
+  const categories = useLiveQuery(() => db.categories.toArray());
   const festival = useLiveQuery(
     () => (session?.festival_id ? db.festivals.get(session.festival_id) : undefined),
     [session?.festival_id]
   );
 
   const [search, setSearch] = useState('');
+  const [cwd, setCwd] = useState<ID | null>(null); // null = root
   const [activeProduct, setActiveProduct] = useState<Product | null>(null);
   const cart = useCart();
 
-  const filtered = useMemo(() => {
-    if (!products) return [];
+  // ---- Hierarchical lookups ----
+  // Index categories by parent for O(1) child lookup, and build full ancestor
+  // paths for breadcrumb + recursive product counts.
+  const { childrenByParent, productsByCategory, categoryById, ancestors } =
+    useMemo(() => {
+      const childrenByParent = new Map<ID | null, Category[]>();
+      const productsByCategory = new Map<ID, Product[]>();
+      const categoryById = new Map<ID, Category>();
+
+      for (const c of categories ?? []) {
+        categoryById.set(c.id, c);
+        const list = childrenByParent.get(c.parent_id) ?? [];
+        list.push(c);
+        childrenByParent.set(c.parent_id, list);
+      }
+      for (const list of childrenByParent.values()) {
+        list.sort(
+          (a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name)
+        );
+      }
+      for (const p of products ?? []) {
+        const list = productsByCategory.get(p.category_id) ?? [];
+        list.push(p);
+        productsByCategory.set(p.category_id, list);
+      }
+      for (const list of productsByCategory.values()) {
+        list.sort(
+          (a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name)
+        );
+      }
+
+      // Walk from cwd up to root for the breadcrumb.
+      const ancestors: Category[] = [];
+      let cursor = cwd ? categoryById.get(cwd) ?? null : null;
+      while (cursor) {
+        ancestors.unshift(cursor);
+        cursor = cursor.parent_id ? categoryById.get(cursor.parent_id) ?? null : null;
+      }
+
+      return { childrenByParent, productsByCategory, categoryById, ancestors };
+    }, [categories, products, cwd]);
+
+  // Count of products contained in this category recursively (for badge).
+  function recursiveProductCount(cat_id: ID): number {
+    let total = productsByCategory.get(cat_id)?.length ?? 0;
+    for (const child of childrenByParent.get(cat_id) ?? []) {
+      total += recursiveProductCount(child.id);
+    }
+    return total;
+  }
+
+  // Search bypasses hierarchy entirely.
+  const searchMatches = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return products;
+    if (!q || !products) return null;
     return products.filter((p) => p.name.toLowerCase().includes(q));
   }, [products, search]);
 
@@ -59,6 +113,22 @@ export function Sell() {
     0
   );
   const cartCount = cart.lines.reduce((s, l) => s + l.quantity, 0);
+
+  // What to render in the main area: search results (flat) or the current
+  // directory's contents (subcategories + products).
+  const inSearchMode = !!searchMatches;
+  const currentSubcategories = inSearchMode
+    ? []
+    : childrenByParent.get(cwd) ?? [];
+  const currentProducts = inSearchMode
+    ? searchMatches
+    : cwd
+    ? productsByCategory.get(cwd) ?? []
+    : productsByCategory.get(cwd as unknown as ID) ?? [];
+  // Note on the last line: products living at the "root" (no category) aren't
+  // a thing in this app (products require a category_id), but the lookup is
+  // harmless and the empty array result lets us still render a "no products
+  // here, pick a category" state cleanly when cwd is null.
 
   return (
     <div className="relative pb-24">
@@ -98,15 +168,75 @@ export function Sell() {
         onChange={(e) => setSearch(e.target.value)}
       />
 
-      {filtered.length === 0 ? (
+      {/* Breadcrumb: only when not searching */}
+      {!inSearchMode && (
+        <nav className="flex flex-wrap items-center gap-1 mb-3 text-sm">
+          <button
+            onClick={() => setCwd(null)}
+            className={`px-2 py-1 rounded font-ui ${
+              cwd === null
+                ? 'text-walnut-dark font-medium'
+                : 'text-walnut/70 hover:text-walnut'
+            }`}
+          >
+            ⌂ All
+          </button>
+          {ancestors.map((a, i) => (
+            <span key={a.id} className="flex items-center gap-1">
+              <span className="text-walnut/40">/</span>
+              <button
+                onClick={() => setCwd(a.id)}
+                className={`px-2 py-1 rounded font-ui ${
+                  i === ancestors.length - 1
+                    ? 'text-walnut-dark font-medium'
+                    : 'text-walnut/70 hover:text-walnut'
+                }`}
+              >
+                {a.name}
+              </button>
+            </span>
+          ))}
+        </nav>
+      )}
+
+      {/* Subcategories row — same grid, but folder-styled tiles */}
+      {currentSubcategories.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 mb-3">
+          {currentSubcategories.map((cat) => (
+            <button
+              key={cat.id}
+              className="tile p-3 text-left flex flex-col gap-1"
+              onClick={() => setCwd(cat.id)}
+            >
+              <div className="aspect-square rounded-md bg-parchment-dark flex items-center justify-center text-5xl text-brass/70">
+                ⚙
+              </div>
+              <div className="mt-1 text-sm font-ui font-medium truncate">
+                {cat.name}
+              </div>
+              <div className="text-xs text-walnut/60">
+                {recursiveProductCount(cat.id)} item
+                {recursiveProductCount(cat.id) === 1 ? '' : 's'}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Products grid */}
+      {currentProducts.length === 0 && currentSubcategories.length === 0 ? (
         <p className="text-walnut/60 text-center py-8">
-          {products?.length === 0
+          {inSearchMode
+            ? 'No matches.'
+            : products?.length === 0
             ? 'No products yet. Add some in Catalogue.'
-            : 'No matches.'}
+            : cwd === null
+            ? 'Tap a category above to drill in.'
+            : 'Nothing in this category yet.'}
         </p>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-          {filtered.map((p) => (
+          {currentProducts.map((p) => (
             <button
               key={p.id}
               className="tile p-2 text-left"
@@ -124,6 +254,11 @@ export function Sell() {
                 <span>{fmtCurrency(p.list_price)}</span>
                 <span>qty {p.quantity_on_hand}</span>
               </div>
+              {inSearchMode && categoryById.has(p.category_id) && (
+                <div className="text-[10px] text-walnut/50 truncate mt-0.5">
+                  in {categoryById.get(p.category_id)!.name}
+                </div>
+              )}
             </button>
           ))}
         </div>
