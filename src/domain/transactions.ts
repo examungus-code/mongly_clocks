@@ -20,6 +20,7 @@ export interface CartLine {
   product_name: string; // snapshot for cart display
   quantity: number;
   unit_price: number;
+  subtype: string | null; // null when the product has no subtypes defined
 }
 
 export interface CompleteTransactionInput {
@@ -61,6 +62,7 @@ export async function completeTransaction(
     quantity: line.quantity,
     unit_price: line.unit_price,
     line_total: line.unit_price * line.quantity,
+    subtype: line.subtype,
   }));
 
   await db.transaction(

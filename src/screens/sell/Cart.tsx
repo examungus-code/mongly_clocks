@@ -86,6 +86,11 @@ export function Cart() {
               <div className="flex-1 min-w-0">
                 <div className="font-ui font-medium truncate">
                   {line.product_name}
+                  {line.subtype && (
+                    <span className="text-xs text-walnut/60 font-normal ml-1">
+                      · {line.subtype}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 mt-1">
                   <button

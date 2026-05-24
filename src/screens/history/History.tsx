@@ -51,6 +51,7 @@ export function History() {
           festival: festivalName(tx.festival_id),
           payment_type: paymentName(tx.payment_type_id),
           product: productName(line.product_id),
+          subtype: line.subtype ?? '',
           quantity: line.quantity,
           unit_price: line.unit_price.toFixed(2),
           line_total: line.line_total.toFixed(2),
@@ -65,6 +66,7 @@ export function History() {
       'festival',
       'payment_type',
       'product',
+      'subtype',
       'quantity',
       'unit_price',
       'line_total',
@@ -153,6 +155,9 @@ export function History() {
                     <div key={l.id} className="flex justify-between">
                       <span>
                         {l.quantity} × {productName(l.product_id)}
+                        {l.subtype && (
+                          <span className="text-walnut/60"> · {l.subtype}</span>
+                        )}
                       </span>
                       <span>{fmtCurrency(l.line_total)}</span>
                     </div>

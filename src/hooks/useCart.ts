@@ -20,9 +20,14 @@ export function getCart(): CartState {
 }
 
 export function addToCart(line: CartLine): void {
-  // Merge into existing line for same product if unit_price matches
+  // Merge into existing line only when product + subtype + unit_price all match.
+  // Different subtypes are kept as separate lines so the customer's receipt
+  // (and the CSV) reflects which variant they actually bought.
   const existingIdx = state.lines.findIndex(
-    (l) => l.product_id === line.product_id && l.unit_price === line.unit_price
+    (l) =>
+      l.product_id === line.product_id &&
+      l.unit_price === line.unit_price &&
+      l.subtype === line.subtype
   );
   if (existingIdx >= 0) {
     const updated = [...state.lines];

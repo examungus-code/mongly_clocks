@@ -21,6 +21,17 @@ export function ProductActionSheet({ product, onClose }: Props) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const navigate = useNavigate();
 
+  // Subtypes: normalize for pre-v2 product rows that might be missing the field.
+  const subtypes = product.subtypes ?? [];
+  const hasSubtypes = subtypes.length > 0;
+  const [subtype, setSubtype] = useState<string | null>(
+    product.default_subtype ?? null
+  );
+  // If no subtypes are defined, subtype must always be null. If subtypes exist
+  // but there's no default, subtype is null until the operator picks one — and
+  // that blocks Add to Cart / Sold.
+  const subtypeMissing = hasSubtypes && !subtype;
+
   useEffect(() => {
     ref.current?.showModal();
     return () => ref.current?.close();
@@ -31,16 +42,19 @@ export function ProductActionSheet({ product, onClose }: Props) {
     : product.list_price;
 
   function handleAddToCart() {
+    if (subtypeMissing) return;
     addToCart({
       product_id: product.id,
       product_name: product.name,
       quantity: qty,
       unit_price: unitPrice,
+      subtype: hasSubtypes ? subtype : null,
     });
     onClose();
   }
 
   async function handleSoldImmediate() {
+    if (subtypeMissing) return;
     if (!session?.default_payment_type_id) {
       alert('No payment type set on session');
       return;
@@ -52,6 +66,7 @@ export function ProductActionSheet({ product, onClose }: Props) {
           product_name: product.name,
           quantity: qty,
           unit_price: unitPrice,
+          subtype: hasSubtypes ? subtype : null,
         },
       ],
       festival_id: session.festival_id,
@@ -61,6 +76,7 @@ export function ProductActionSheet({ product, onClose }: Props) {
   }
 
   async function handleLost(reason: 'lost' | 'broken') {
+    // Lost/Broken don't depend on subtype (qty pool is shared across subtypes).
     await recordAdjustment({
       product_id: product.id,
       delta: -qty,
@@ -90,6 +106,33 @@ export function ProductActionSheet({ product, onClose }: Props) {
             </div>
           </div>
         </div>
+
+        {hasSubtypes && (
+          <div>
+            <label className="label">
+              Subtype{' '}
+              {subtypeMissing && (
+                <span className="text-copper text-xs">· required</span>
+              )}
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {subtypes.map((opt) => (
+                <button
+                  key={opt}
+                  type="button"
+                  className={`px-3 py-2 rounded-md border text-sm font-ui min-h-[44px] ${
+                    subtype === opt
+                      ? 'bg-brass-dark text-parchment-light border-brass-dark'
+                      : 'bg-parchment-light text-walnut border-walnut/30 hover:bg-parchment-dark'
+                  }`}
+                  onClick={() => setSubtype(opt)}
+                >
+                  {opt}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div>
           <label className="label">Quantity</label>
@@ -143,12 +186,20 @@ export function ProductActionSheet({ product, onClose }: Props) {
           <strong>{fmtCurrency(unitPrice * qty)}</strong>
         </div>
 
-        <button className="btn-primary w-full" onClick={handleAddToCart}>
+        <button
+          className="btn-primary w-full"
+          onClick={handleAddToCart}
+          disabled={subtypeMissing}
+        >
           Add to cart
         </button>
 
         <div className="grid grid-cols-3 gap-2">
-          <button className="btn-secondary text-sm" onClick={handleSoldImmediate}>
+          <button
+            className="btn-secondary text-sm"
+            onClick={handleSoldImmediate}
+            disabled={subtypeMissing}
+          >
             Sold
           </button>
           <button

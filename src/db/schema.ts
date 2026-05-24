@@ -32,6 +32,13 @@ export interface Product {
   photo_id: ID | null;
   sort_order: number;
   archived: boolean;
+  // Subtypes are optional sale-time variants of a product (e.g. metal: silver
+  // / gold / copper). They are *labels* in this model — they don't split the
+  // qty pool. If subtypes is empty, no selector is shown at sale time. If
+  // default_subtype is set, it pre-fills the selector; if null, the operator
+  // must pick one before the sale records.
+  subtypes: string[];
+  default_subtype: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -71,6 +78,9 @@ export interface TransactionLineItem {
   quantity: number;
   unit_price: number; // overrideable per-line
   line_total: number; // cached: quantity * unit_price
+  // Snapshot of the subtype selected at sale time. Stored as a string (not an
+  // ID) so renaming a subtype later doesn't rewrite history.
+  subtype: string | null;
 }
 
 export interface Festival {
@@ -156,4 +166,6 @@ export const db = new ClockworkDB();
 
 // SCHEMA_VERSION is written to meta.json on Drive sync. Bump when a future
 // migration is needed; pull will refuse a cloud copy with a higher version.
-export const SCHEMA_VERSION = 1;
+// v2: Product.subtypes / Product.default_subtype, TransactionLineItem.subtype.
+//     Older devices missing these fields handle them as empty / null.
+export const SCHEMA_VERSION = 2;

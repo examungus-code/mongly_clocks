@@ -37,6 +37,13 @@ export function ProductEditor(props: Props) {
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoCleared, setPhotoCleared] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Subtypes: editable as a list of strings. Empty = no subtypes for this
+  // product. default_subtype is one of the subtype strings, or null for "no
+  // default (operator must pick)".
+  const [subtypes, setSubtypes] = useState<string[]>(existing?.subtypes ?? []);
+  const [defaultSubtype, setDefaultSubtype] = useState<string | null>(
+    existing?.default_subtype ?? null
+  );
 
   const dialogRef = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -65,6 +72,17 @@ export function ProductEditor(props: Props) {
     };
   }, [photoPreviewUrl]);
 
+  // Clean subtypes before save: trim, drop empties, dedupe (mirror normalize
+  // in the domain layer so the default picker stays consistent).
+  const cleanSubtypes = subtypes
+    .map((s) => s.trim())
+    .filter((s, i, a) => s && a.indexOf(s) === i);
+  // If the default no longer matches any subtype (renamed or removed), reset.
+  const effectiveDefault =
+    defaultSubtype && cleanSubtypes.includes(defaultSubtype)
+      ? defaultSubtype
+      : null;
+
   async function handleSave() {
     const priceNum = parseFloat(price);
     if (!name.trim() || isNaN(priceNum) || priceNum < 0) return;
@@ -79,6 +97,8 @@ export function ProductEditor(props: Props) {
           list_price: priceNum,
           initial_quantity: qty,
           photo_file: photoFile,
+          subtypes: cleanSubtypes,
+          default_subtype: effectiveDefault,
         });
       } else {
         await updateProduct(props.product.id, {
@@ -86,6 +106,8 @@ export function ProductEditor(props: Props) {
           description,
           list_price: priceNum,
           photo_file: photoCleared ? null : (photoFile ?? undefined),
+          subtypes: cleanSubtypes,
+          default_subtype: effectiveDefault,
         });
       }
       props.onSaved();
@@ -200,6 +222,88 @@ export function ProductEditor(props: Props) {
               )}
             </div>
           </div>
+        </div>
+
+        <div className="border-t border-brass/30 pt-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <h4 className="font-display text-base">Subtypes (optional)</h4>
+            <button
+              type="button"
+              className="text-sm text-walnut/70 hover:text-walnut"
+              onClick={() => setSubtypes((s) => [...s, ''])}
+            >
+              + Add subtype
+            </button>
+          </div>
+          {subtypes.length === 0 ? (
+            <p className="text-xs text-walnut/60">
+              Leave empty if this product has no variants. Add subtypes (e.g.
+              silver / gold / copper) to make the operator pick one at sale
+              time.
+            </p>
+          ) : (
+            <>
+              <p className="text-xs text-walnut/60">
+                Pick a default below, or leave “No default” to force the
+                operator to choose at sale time.
+              </p>
+              <ul className="space-y-1.5">
+                {subtypes.map((sub, i) => {
+                  const trimmed = sub.trim();
+                  const isDefault = !!trimmed && defaultSubtype === trimmed;
+                  return (
+                    <li key={i} className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="default-subtype"
+                        checked={isDefault}
+                        disabled={!trimmed}
+                        onChange={() => setDefaultSubtype(trimmed)}
+                        title="Default at sale time"
+                      />
+                      <input
+                        className="input !min-h-0 !py-1.5 flex-1"
+                        placeholder="Subtype name"
+                        value={sub}
+                        onChange={(e) => {
+                          const next = [...subtypes];
+                          next[i] = e.target.value;
+                          // If the renamed value was the default, follow the rename.
+                          if (defaultSubtype === sub.trim()) {
+                            setDefaultSubtype(e.target.value.trim());
+                          }
+                          setSubtypes(next);
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="text-copper text-sm px-1"
+                        onClick={() => {
+                          const next = subtypes.filter((_, j) => j !== i);
+                          setSubtypes(next);
+                          if (defaultSubtype === sub.trim()) {
+                            setDefaultSubtype(null);
+                          }
+                        }}
+                        title="Remove"
+                      >
+                        ✕
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="default-subtype"
+                  checked={defaultSubtype === null}
+                  onChange={() => setDefaultSubtype(null)}
+                />
+                <span>No default (operator must pick)</span>
+              </label>
+            </>
+          )}
         </div>
 
         {isEdit && existing && (

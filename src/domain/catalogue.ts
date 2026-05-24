@@ -201,6 +201,8 @@ export interface NewProductInput {
   list_price: number;
   initial_quantity: number;
   photo_file: File | null;
+  subtypes: string[];
+  default_subtype: string | null;
 }
 
 export async function createProduct(input: NewProductInput): Promise<ID> {
@@ -230,6 +232,8 @@ export async function createProduct(input: NewProductInput): Promise<ID> {
       photo_id,
       sort_order: maxOrder + 1,
       archived: false,
+      subtypes: normalizeSubtypes(input.subtypes),
+      default_subtype: input.default_subtype,
       created_at: now,
       updated_at: now,
     });
@@ -258,6 +262,8 @@ export interface UpdateProductInput {
   list_price?: number;
   photo_file?: File | null; // null = clear photo, undefined = no change
   category_id?: ID;
+  subtypes?: string[];
+  default_subtype?: string | null;
 }
 
 export async function updateProduct(
@@ -273,6 +279,10 @@ export async function updateProduct(
     patch.description = input.description.trim();
   if (input.list_price !== undefined) patch.list_price = input.list_price;
   if (input.category_id !== undefined) patch.category_id = input.category_id;
+  if (input.subtypes !== undefined)
+    patch.subtypes = normalizeSubtypes(input.subtypes);
+  if (input.default_subtype !== undefined)
+    patch.default_subtype = input.default_subtype;
 
   await db.transaction('rw', [db.products, db.photos], async () => {
     if (input.photo_file !== undefined) {
@@ -298,6 +308,29 @@ export async function archiveProduct(id: ID): Promise<void> {
 
 export async function unarchiveProduct(id: ID): Promise<void> {
   await db.products.update(id, { archived: false, updated_at: Date.now() });
+}
+
+/** Trim, drop empties, dedupe while preserving order. */
+function normalizeSubtypes(subtypes: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of subtypes) {
+    const name = raw.trim();
+    if (!name) continue;
+    if (seen.has(name)) continue;
+    seen.add(name);
+    out.push(name);
+  }
+  return out;
+}
+
+/** Use everywhere the UI reads a product, to handle pre-v2 rows missing fields. */
+export function withSubtypeDefaults(p: Product): Product {
+  return {
+    ...p,
+    subtypes: p.subtypes ?? [],
+    default_subtype: p.default_subtype ?? null,
+  };
 }
 
 export async function reorderProducts(
