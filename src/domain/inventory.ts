@@ -49,6 +49,29 @@ export async function recordAdjustment(
 }
 
 /**
+ * Delete a single inventory adjustment and roll the cached quantity back by
+ * the same delta. Intended for non-sale adjustments (restocked, lost, broken,
+ * manual_correction) where a row is a freestanding event. For 'sold'
+ * adjustments, the caller should delete the parent transaction via
+ * deleteTransaction instead — that path also removes line items and the tx
+ * row so history stays consistent.
+ */
+export async function deleteAdjustment(adjustment_id: string): Promise<void> {
+  await db.transaction('rw', [db.adjustments, db.products], async () => {
+    const adj = await db.adjustments.get(adjustment_id);
+    if (!adj) return;
+    const product = await db.products.get(adj.product_id);
+    await db.adjustments.delete(adjustment_id);
+    if (product) {
+      await db.products.update(adj.product_id, {
+        quantity_on_hand: product.quantity_on_hand - adj.delta,
+        updated_at: Date.now(),
+      });
+    }
+  });
+}
+
+/**
  * Recompute Product.quantity_on_hand from scratch by summing the adjustments
  * log. Run after a Drive Pull or whenever the cache is suspect.
  */

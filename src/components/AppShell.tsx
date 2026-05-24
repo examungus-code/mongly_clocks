@@ -5,6 +5,7 @@ const NAV = [
   { to: '/', label: 'Home', icon: '⚙' },
   { to: '/sell', label: 'Sell', icon: '🔑' },
   { to: '/catalogue', label: 'Catalogue', icon: '⏱' },
+  { to: '/inventory', label: 'Inventory', icon: '⚖' },
   { to: '/history', label: 'History', icon: '🕰' },
   { to: '/sync', label: 'Sync', icon: '↻' },
   { to: '/settings', label: 'Settings', icon: '✦' },
@@ -33,7 +34,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </main>
 
       <nav className="border-t border-brass/40 bg-walnut/95 text-parchment-light">
-        <div className="max-w-6xl mx-auto grid grid-cols-6">
+        <div className="max-w-6xl mx-auto grid grid-cols-7">
           {NAV.map((item) => (
             <NavLink
               key={item.to}
