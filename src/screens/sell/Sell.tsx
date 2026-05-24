@@ -217,26 +217,28 @@ export function Sell() {
       </nav>
 
       {currentSubcategories.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 mb-3">
-          {currentSubcategories.map((cat) => (
-            <button
-              key={cat.id}
-              className="tile p-3 text-left flex flex-col gap-1"
-              onClick={() => setCwd(cat.id)}
-            >
-              <div className="aspect-square rounded-md bg-parchment-dark flex items-center justify-center text-5xl text-brass/70">
-                ⚙
-              </div>
-              <div className="mt-1 text-sm font-ui font-medium truncate">
-                {cat.name}
-              </div>
-              <div className="text-xs text-walnut/60">
-                {recursiveProductCount(cat.id)} item
-                {recursiveProductCount(cat.id) === 1 ? '' : 's'}
-              </div>
-            </button>
-          ))}
-        </div>
+        <ul className="card divide-y divide-brass/20 mb-3">
+          {currentSubcategories.map((cat) => {
+            const count = recursiveProductCount(cat.id);
+            return (
+              <li key={cat.id}>
+                <button
+                  className="w-full px-3 py-3 flex items-center gap-3 text-left hover:bg-parchment-dark/40"
+                  onClick={() => setCwd(cat.id)}
+                >
+                  <span className="text-brass/70 text-lg leading-none">⚙</span>
+                  <span className="flex-1 font-ui font-medium truncate">
+                    {cat.name}
+                  </span>
+                  <span className="text-xs text-walnut/60">
+                    {count} item{count === 1 ? '' : 's'}
+                  </span>
+                  <span className="text-walnut/40">›</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
       )}
 
       {currentProducts.length === 0 && currentSubcategories.length === 0 ? (
