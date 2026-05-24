@@ -1,6 +1,13 @@
-// Sell screen — booth optimized. Drill-down navigation through categories
-// (like a file system), with text search that overrides the hierarchy by
-// showing a flat list of matches across all categories.
+// Sell screen — booth optimized for speed.
+//
+// Tap = sale. One tap on a product tile creates a single-line transaction with
+// quantity 1 at list price, paid via the session's default payment type. The
+// only exception is products that have subtypes but no default subtype set —
+// those open a one-tap subtype picker, then sell.
+//
+// No cart, no search bar, no quantity stepper, no price override at sale time.
+// Mistakes are corrected via the Recent screen (delete the transaction) or
+// via the catalogue editor for inventory adjustments.
 
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -8,8 +15,14 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Category, type ID, type Product } from '../../db/schema';
 import { PhotoImg } from '../../components/PhotoImg';
 import { fmtCurrency } from '../../utils/format';
-import { ProductActionSheet } from './ProductActionSheet';
-import { useCart } from '../../hooks/useCart';
+import { completeTransaction } from '../../domain/transactions';
+import { SubtypePicker } from './SubtypePicker';
+
+interface Toast {
+  product_name: string;
+  amount: number;
+  expiresAt: number;
+}
 
 export function Sell() {
   const navigate = useNavigate();
@@ -23,15 +36,14 @@ export function Sell() {
     [session?.festival_id]
   );
 
-  const [search, setSearch] = useState('');
   const [cwd, setCwd] = useState<ID | null>(null); // null = root
-  const [activeProduct, setActiveProduct] = useState<Product | null>(null);
-  const cart = useCart();
+  const [pickingSubtypeFor, setPickingSubtypeFor] = useState<Product | null>(
+    null
+  );
+  const [toast, setToast] = useState<Toast | null>(null);
 
-  // ---- Hierarchical lookups ----
-  // Index categories by parent for O(1) child lookup, and build full ancestor
-  // paths for breadcrumb + recursive product counts.
-  const { childrenByParent, productsByCategory, categoryById, ancestors } =
+  // ---- Hierarchical lookups (same as before) ----
+  const { childrenByParent, productsByCategory, ancestors } =
     useMemo(() => {
       const childrenByParent = new Map<ID | null, Category[]>();
       const productsByCategory = new Map<ID, Product[]>();
@@ -59,7 +71,6 @@ export function Sell() {
         );
       }
 
-      // Walk from cwd up to root for the breadcrumb.
       const ancestors: Category[] = [];
       let cursor = cwd ? categoryById.get(cwd) ?? null : null;
       while (cursor) {
@@ -67,10 +78,9 @@ export function Sell() {
         cursor = cursor.parent_id ? categoryById.get(cursor.parent_id) ?? null : null;
       }
 
-      return { childrenByParent, productsByCategory, categoryById, ancestors };
+      return { childrenByParent, productsByCategory, ancestors };
     }, [categories, products, cwd]);
 
-  // Count of products contained in this category recursively (for badge).
   function recursiveProductCount(cat_id: ID): number {
     let total = productsByCategory.get(cat_id)?.length ?? 0;
     for (const child of childrenByParent.get(cat_id) ?? []) {
@@ -78,13 +88,6 @@ export function Sell() {
     }
     return total;
   }
-
-  // Search bypasses hierarchy entirely.
-  const searchMatches = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q || !products) return null;
-    return products.filter((p) => p.name.toLowerCase().includes(q));
-  }, [products, search]);
 
   // Today's totals
   const since = session?.started_at ?? 0;
@@ -108,27 +111,49 @@ export function Sell() {
     );
   }
 
-  const cartTotal = cart.lines.reduce(
-    (s, l) => s + l.quantity * l.unit_price,
-    0
-  );
-  const cartCount = cart.lines.reduce((s, l) => s + l.quantity, 0);
+  async function sellNow(product: Product, subtype: string | null) {
+    if (!session?.default_payment_type_id) {
+      alert('No payment type set on session');
+      return;
+    }
+    await completeTransaction({
+      lines: [
+        {
+          product_id: product.id,
+          product_name: product.name,
+          quantity: 1,
+          unit_price: product.list_price,
+          subtype,
+        },
+      ],
+      festival_id: session.festival_id,
+      payment_type_id: session.default_payment_type_id,
+    });
+    showToast(product.name + (subtype ? ` · ${subtype}` : ''), product.list_price);
+  }
 
-  // What to render in the main area: search results (flat) or the current
-  // directory's contents (subcategories + products).
-  const inSearchMode = !!searchMatches;
-  const currentSubcategories = inSearchMode
-    ? []
-    : childrenByParent.get(cwd) ?? [];
-  const currentProducts = inSearchMode
-    ? searchMatches
-    : cwd
-    ? productsByCategory.get(cwd) ?? []
-    : productsByCategory.get(cwd as unknown as ID) ?? [];
-  // Note on the last line: products living at the "root" (no category) aren't
-  // a thing in this app (products require a category_id), but the lookup is
-  // harmless and the empty array result lets us still render a "no products
-  // here, pick a category" state cleanly when cwd is null.
+  function handleTileTap(product: Product) {
+    const subtypes = product.subtypes ?? [];
+    const hasSubtypes = subtypes.length > 0;
+    const def = product.default_subtype ?? null;
+    if (hasSubtypes && !def) {
+      // Operator must pick — open the picker, sale completes on selection.
+      setPickingSubtypeFor(product);
+      return;
+    }
+    void sellNow(product, hasSubtypes ? def : null);
+  }
+
+  function showToast(name: string, amount: number) {
+    const expiresAt = Date.now() + 2500;
+    setToast({ product_name: name, amount, expiresAt });
+    setTimeout(() => {
+      setToast((cur) => (cur && cur.expiresAt === expiresAt ? null : cur));
+    }, 2500);
+  }
+
+  const currentSubcategories = childrenByParent.get(cwd) ?? [];
+  const currentProducts = cwd ? productsByCategory.get(cwd) ?? [] : [];
 
   return (
     <div className="relative pb-24">
@@ -147,6 +172,9 @@ export function Sell() {
             {fmtCurrency(todayRevenue)}
           </div>
         </div>
+        <Link to="/sell/recent" className="btn-ghost text-sm">
+          Recent
+        </Link>
         <button
           className="btn-ghost text-sm"
           onClick={async () => {
@@ -160,46 +188,34 @@ export function Sell() {
         </button>
       </div>
 
-      <input
-        type="search"
-        placeholder="Search products…"
-        className="input mb-3"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-      />
+      <nav className="flex flex-wrap items-center gap-1 mb-3 text-sm">
+        <button
+          onClick={() => setCwd(null)}
+          className={`px-2 py-1 rounded font-ui ${
+            cwd === null
+              ? 'text-walnut-dark font-medium'
+              : 'text-walnut/70 hover:text-walnut'
+          }`}
+        >
+          ⌂ All
+        </button>
+        {ancestors.map((a, i) => (
+          <span key={a.id} className="flex items-center gap-1">
+            <span className="text-walnut/40">/</span>
+            <button
+              onClick={() => setCwd(a.id)}
+              className={`px-2 py-1 rounded font-ui ${
+                i === ancestors.length - 1
+                  ? 'text-walnut-dark font-medium'
+                  : 'text-walnut/70 hover:text-walnut'
+              }`}
+            >
+              {a.name}
+            </button>
+          </span>
+        ))}
+      </nav>
 
-      {/* Breadcrumb: only when not searching */}
-      {!inSearchMode && (
-        <nav className="flex flex-wrap items-center gap-1 mb-3 text-sm">
-          <button
-            onClick={() => setCwd(null)}
-            className={`px-2 py-1 rounded font-ui ${
-              cwd === null
-                ? 'text-walnut-dark font-medium'
-                : 'text-walnut/70 hover:text-walnut'
-            }`}
-          >
-            ⌂ All
-          </button>
-          {ancestors.map((a, i) => (
-            <span key={a.id} className="flex items-center gap-1">
-              <span className="text-walnut/40">/</span>
-              <button
-                onClick={() => setCwd(a.id)}
-                className={`px-2 py-1 rounded font-ui ${
-                  i === ancestors.length - 1
-                    ? 'text-walnut-dark font-medium'
-                    : 'text-walnut/70 hover:text-walnut'
-                }`}
-              >
-                {a.name}
-              </button>
-            </span>
-          ))}
-        </nav>
-      )}
-
-      {/* Subcategories row — same grid, but folder-styled tiles */}
       {currentSubcategories.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 mb-3">
           {currentSubcategories.map((cat) => (
@@ -223,62 +239,68 @@ export function Sell() {
         </div>
       )}
 
-      {/* Products grid */}
       {currentProducts.length === 0 && currentSubcategories.length === 0 ? (
         <p className="text-walnut/60 text-center py-8">
-          {inSearchMode
-            ? 'No matches.'
-            : products?.length === 0
+          {products?.length === 0
             ? 'No products yet. Add some in Catalogue.'
             : cwd === null
             ? 'Tap a category above to drill in.'
             : 'Nothing in this category yet.'}
         </p>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-          {currentProducts.map((p) => (
-            <button
-              key={p.id}
-              className="tile p-2 text-left"
-              onClick={() => setActiveProduct(p)}
-            >
-              <PhotoImg
-                photo_id={p.photo_id}
-                alt={p.name}
-                className="w-full aspect-square object-cover rounded-md"
-              />
-              <div className="mt-2 text-sm font-ui font-medium truncate">
-                {p.name}
-              </div>
-              <div className="flex justify-between text-xs text-walnut/60">
-                <span>{fmtCurrency(p.list_price)}</span>
-                <span>qty {p.quantity_on_hand}</span>
-              </div>
-              {inSearchMode && categoryById.has(p.category_id) && (
-                <div className="text-[10px] text-walnut/50 truncate mt-0.5">
-                  in {categoryById.get(p.category_id)!.name}
+        currentProducts.length > 0 && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            {currentProducts.map((p) => (
+              <button
+                key={p.id}
+                className="tile p-2 text-left active:scale-95 transition-transform"
+                onClick={() => handleTileTap(p)}
+              >
+                <PhotoImg
+                  photo_id={p.photo_id}
+                  alt={p.name}
+                  className="w-full aspect-square object-cover rounded-md"
+                />
+                <div className="mt-2 text-sm font-ui font-medium truncate">
+                  {p.name}
                 </div>
-              )}
-            </button>
-          ))}
-        </div>
+                <div className="flex justify-between text-xs text-walnut/60">
+                  <span>{fmtCurrency(p.list_price)}</span>
+                  <span>qty {p.quantity_on_hand}</span>
+                </div>
+                {(p.subtypes ?? []).length > 0 && (
+                  <div className="text-[10px] text-walnut/50 truncate mt-0.5">
+                    {p.default_subtype
+                      ? `→ ${p.default_subtype}`
+                      : '↳ pick subtype'}
+                  </div>
+                )}
+              </button>
+            ))}
+          </div>
+        )
       )}
 
-      {cartCount > 0 && (
-        <Link
-          to="/cart"
-          className="fixed bottom-20 right-4 btn-primary shadow-lg z-10"
-        >
-          Cart · {cartCount} item{cartCount === 1 ? '' : 's'} ·{' '}
-          {fmtCurrency(cartTotal)}
-        </Link>
-      )}
-
-      {activeProduct && (
-        <ProductActionSheet
-          product={activeProduct}
-          onClose={() => setActiveProduct(null)}
+      {pickingSubtypeFor && (
+        <SubtypePicker
+          product={pickingSubtypeFor}
+          onCancel={() => setPickingSubtypeFor(null)}
+          onPick={async (subtype) => {
+            const p = pickingSubtypeFor;
+            setPickingSubtypeFor(null);
+            await sellNow(p, subtype);
+          }}
         />
+      )}
+
+      {toast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-walnut text-parchment-light px-4 py-2 rounded-lg shadow-lg z-20 text-sm font-ui"
+        >
+          ✓ Sold: {toast.product_name} · {fmtCurrency(toast.amount)}
+        </div>
       )}
     </div>
   );

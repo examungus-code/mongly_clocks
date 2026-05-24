@@ -3,7 +3,7 @@ import { AppShell } from './components/AppShell';
 import { Dashboard } from './screens/dashboard/Dashboard';
 import { StartSession } from './screens/session/StartSession';
 import { Sell } from './screens/sell/Sell';
-import { Cart } from './screens/sell/Cart';
+import { RecentSales } from './screens/sell/RecentSales';
 import { Catalogue } from './screens/catalogue/Catalogue';
 import { InventoryLog } from './screens/inventory/InventoryLog';
 import { History } from './screens/history/History';
@@ -17,7 +17,7 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/session/start" element={<StartSession />} />
         <Route path="/sell" element={<Sell />} />
-        <Route path="/cart" element={<Cart />} />
+        <Route path="/sell/recent" element={<RecentSales />} />
         <Route path="/catalogue" element={<Catalogue />} />
         <Route path="/inventory" element={<InventoryLog />} />
         <Route path="/history" element={<History />} />

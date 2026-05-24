@@ -31,6 +31,59 @@ export interface CompleteTransactionInput {
   occurred_at?: number;
 }
 
+/**
+ * Fully reverse a transaction as if it never happened. This is for fixing
+ * mistakes at the booth — *not* refunds. Deletes:
+ *   - the Transaction row
+ *   - its TransactionLineItem rows
+ *   - the 'sold' InventoryAdjustment rows referencing this transaction
+ * and restores each affected product's quantity_on_hand by adding back the
+ * deleted quantities.
+ *
+ * If she wants an actual refund audit trail later, that's a different
+ * operation (record a refund adjustment, keep the original tx).
+ */
+export async function deleteTransaction(tx_id: ID): Promise<void> {
+  await db.transaction(
+    'rw',
+    [db.transactions, db.line_items, db.adjustments, db.products],
+    async () => {
+      const lines = await db.line_items
+        .where('transaction_id')
+        .equals(tx_id)
+        .toArray();
+
+      // Aggregate qty to restore per product so we make one update per product.
+      const restorePerProduct = new Map<ID, number>();
+      for (const line of lines) {
+        restorePerProduct.set(
+          line.product_id,
+          (restorePerProduct.get(line.product_id) ?? 0) + line.quantity
+        );
+      }
+      for (const [product_id, delta] of restorePerProduct) {
+        const product = await db.products.get(product_id);
+        if (!product) continue;
+        await db.products.update(product_id, {
+          quantity_on_hand: product.quantity_on_hand + delta,
+          updated_at: Date.now(),
+        });
+      }
+
+      // Delete the adjustments tagged with this transaction id.
+      const soldIds = await db.adjustments
+        .where('transaction_id')
+        .equals(tx_id)
+        .primaryKeys();
+      await db.adjustments.bulkDelete(soldIds);
+
+      // Delete line items, then the transaction.
+      await db.line_items.bulkDelete(lines.map((l) => l.id));
+      await db.transactions.delete(tx_id);
+    }
+  );
+}
+
 export async function completeTransaction(
   input: CompleteTransactionInput
 ): Promise<ID> {
