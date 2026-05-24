@@ -1,0 +1,62 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Lora:wght@400;500;600&family=Inter:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    @apply h-full;
+  }
+  body {
+    @apply font-body text-walnut bg-parchment antialiased;
+    background-image:
+      radial-gradient(circle at 20% 10%, rgba(122, 74, 46, 0.07), transparent 60%),
+      radial-gradient(circle at 80% 80%, rgba(181, 137, 90, 0.08), transparent 60%);
+  }
+  h1, h2, h3, h4 {
+    @apply font-display text-walnut-dark;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-md font-ui font-medium
+           transition-colors select-none disabled:opacity-50 disabled:cursor-not-allowed
+           min-h-[44px];
+  }
+  .btn-primary {
+    @apply btn bg-brass-dark text-parchment-light hover:bg-walnut shadow-brass;
+  }
+  .btn-secondary {
+    @apply btn border border-walnut/30 bg-parchment-light text-walnut hover:bg-parchment-dark;
+  }
+  .btn-danger {
+    @apply btn bg-copper text-parchment-light hover:bg-copper-light;
+  }
+  .btn-ghost {
+    @apply btn text-walnut hover:bg-parchment-dark;
+  }
+  .card {
+    @apply bg-parchment-light border border-brass/30 rounded-lg shadow-sm;
+  }
+  .input {
+    @apply w-full px-3 py-2 rounded-md bg-parchment-light border border-walnut/20
+           text-walnut placeholder:text-walnut/40 focus:outline-none
+           focus:border-brass focus:ring-2 focus:ring-brass/30 min-h-[44px];
+  }
+  .label {
+    @apply block text-sm font-ui font-medium text-walnut mb-1;
+  }
+  .tile {
+    @apply card overflow-hidden cursor-pointer hover:shadow-brass transition-shadow;
+  }
+}
+
+/* Booth-mode touch targets: anything inside .touch-roomy gets bigger hit areas */
+.touch-roomy button,
+.touch-roomy [role='button'] {
+  @apply min-h-[56px];
+}

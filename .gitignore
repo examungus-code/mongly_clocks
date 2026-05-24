@@ -7,6 +7,12 @@ node_modules/
 dist/
 build/
 .vite/
+*.tsbuildinfo
+
+# Generated icons (regenerated on every build)
+public/icons/
+public/apple-touch-icon.png
+public/textures/parchment.svg
 
 # Environment / secrets
 .env
