@@ -64,6 +64,12 @@ export interface InventoryAdjustment {
   delta: number; // negative for sold/lost/broken, positive for restocked
   reason: AdjustmentReason;
   transaction_id: ID | null;
+  // Set when this adjustment was caused by a specific line item ('sold' rows
+  // reference the line they're decrementing; 'sold_component' rows reference
+  // the line whose subtype link triggered them). Optional for backward compat
+  // with pre-v3.1 data; lookups gracefully fall back to (transaction_id +
+  // product_id) matching when this is missing.
+  line_item_id?: ID;
   note: string;
   occurred_at: number;
   created_at: number;

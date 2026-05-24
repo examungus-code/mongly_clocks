@@ -122,7 +122,9 @@ export async function completeTransaction(
     async () => {
       await db.transactions.add(tx);
       await db.line_items.bulkAdd(lineRows);
-      for (const line of input.lines) {
+      for (let i = 0; i < input.lines.length; i++) {
+        const line = input.lines[i];
+        const lineRow = lineRows[i];
         const product = await db.products.get(line.product_id);
         if (!product) throw new Error(`product ${line.product_id} missing`);
 
@@ -133,6 +135,7 @@ export async function completeTransaction(
           delta: -line.quantity,
           reason: 'sold',
           transaction_id: txId,
+          line_item_id: lineRow.id,
           note: '',
           occurred_at: now,
           created_at: Date.now(),
@@ -157,6 +160,7 @@ export async function completeTransaction(
               delta: -line.quantity,
               reason: 'sold_component',
               transaction_id: txId,
+              line_item_id: lineRow.id,
               note: `from ${product.name} · ${line.subtype}`,
               occurred_at: now,
               created_at: Date.now(),
@@ -172,4 +176,90 @@ export async function completeTransaction(
   );
 
   return txId;
+}
+
+/**
+ * Change the subtype of an already-recorded sale. Adjusts component
+ * inventory accordingly: if the old subtype had a linked component, the
+ * existing 'sold_component' adjustment for this line is reversed and the
+ * component qty is restored. If the new subtype has a linked component, a
+ * fresh 'sold_component' adjustment is created and that component's qty
+ * decremented.
+ *
+ * Uses InventoryAdjustment.line_item_id to find the right component row
+ * unambiguously. For pre-line_item_id data, falls back to matching by
+ * transaction + reason + old component product id (works as long as one
+ * line per linked component, which is the only case the booth flow creates).
+ */
+export async function changeLineItemSubtype(
+  line_item_id: ID,
+  new_subtype: string | null
+): Promise<void> {
+  await db.transaction(
+    'rw',
+    [db.line_items, db.adjustments, db.products],
+    async () => {
+      const line = await db.line_items.get(line_item_id);
+      if (!line) throw new Error('line item not found');
+      const product = await db.products.get(line.product_id);
+      if (!product) throw new Error('product not found');
+
+      const links = product.subtype_links ?? {};
+      const oldSubtype = line.subtype;
+      const oldComponentId =
+        oldSubtype && links[oldSubtype] ? links[oldSubtype] : null;
+      const newComponentId =
+        new_subtype && links[new_subtype] ? links[new_subtype] : null;
+
+      // Reverse the existing component adjustment if there was one.
+      if (oldComponentId) {
+        const candidates = await db.adjustments
+          .where('transaction_id')
+          .equals(line.transaction_id)
+          .filter(
+            (a) =>
+              a.reason === 'sold_component' &&
+              a.product_id === oldComponentId &&
+              (a.line_item_id ? a.line_item_id === line_item_id : true)
+          )
+          .toArray();
+        const old = candidates[0];
+        if (old) {
+          const oldComponent = await db.products.get(oldComponentId);
+          if (oldComponent) {
+            await db.products.update(oldComponentId, {
+              quantity_on_hand: oldComponent.quantity_on_hand + -old.delta,
+              updated_at: Date.now(),
+            });
+          }
+          await db.adjustments.delete(old.id);
+        }
+      }
+
+      // Add a new component adjustment if the new subtype has a link.
+      if (newComponentId) {
+        const newComponent = await db.products.get(newComponentId);
+        if (newComponent) {
+          await db.adjustments.add({
+            id: uuid(),
+            product_id: newComponentId,
+            delta: -line.quantity,
+            reason: 'sold_component',
+            transaction_id: line.transaction_id,
+            line_item_id: line.id,
+            note: `from ${product.name} · ${new_subtype}`,
+            occurred_at: Date.now(),
+            created_at: Date.now(),
+          });
+          await db.products.update(newComponentId, {
+            quantity_on_hand: newComponent.quantity_on_hand - line.quantity,
+            updated_at: Date.now(),
+          });
+        }
+      }
+
+      // Finally, update the line item's recorded subtype.
+      await db.line_items.update(line_item_id, { subtype: new_subtype });
+    }
+  );
 }

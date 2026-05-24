@@ -9,7 +9,11 @@ import {
 import { fmtDateTime } from '../../utils/format';
 import { Confirm } from '../../components/Confirm';
 import { deleteAdjustment } from '../../domain/inventory';
-import { deleteTransaction } from '../../domain/transactions';
+import {
+  changeLineItemSubtype,
+  deleteTransaction,
+} from '../../domain/transactions';
+import { useEffect, useRef } from 'react';
 
 const REASONS: { value: AdjustmentReason | ''; label: string }[] = [
   { value: '', label: 'All reasons' },
@@ -41,6 +45,11 @@ export function InventoryLog() {
   const [productFilter, setProductFilter] = useState<ID | ''>('');
   const [pendingDelete, setPendingDelete] =
     useState<InventoryAdjustment | null>(null);
+  const [subtypeEdit, setSubtypeEdit] = useState<{
+    line_item_id: ID;
+    product_id: ID;
+    current: string | null;
+  } | null>(null);
 
   const productName = (id: ID) => products?.find((p) => p.id === id)?.name ?? id;
 
@@ -72,19 +81,33 @@ export function InventoryLog() {
 
   // For a sold adjustment, find the matching line item to recover the subtype
   // snapshot stored at sale time. Adjustments don't carry subtype themselves
-  // because sold ones are derived from the line item.
-  const subtypeForAdjustment = useMemo(() => {
-    const map = new Map<ID, string | null>();
+  // because sold ones are derived from the line item. We also record the
+  // line item id so the "change subtype" affordance knows what to update.
+  const lineForAdjustment = useMemo(() => {
+    const map = new Map<ID, ID>();
     if (!lineItems) return map;
     for (const a of adjustments ?? []) {
       if (a.reason !== 'sold' || !a.transaction_id) continue;
-      const line = lineItems.find(
-        (l) => l.transaction_id === a.transaction_id && l.product_id === a.product_id
-      );
-      if (line) map.set(a.id, line.subtype ?? null);
+      // Prefer explicit line_item_id; fall back to (tx_id, product_id) match
+      // for adjustments written before that field existed.
+      const line = a.line_item_id
+        ? lineItems.find((l) => l.id === a.line_item_id)
+        : lineItems.find(
+            (l) =>
+              l.transaction_id === a.transaction_id &&
+              l.product_id === a.product_id
+          );
+      if (line) map.set(a.id, line.id);
     }
     return map;
   }, [adjustments, lineItems]);
+
+  function subtypeForAdj(a_id: ID): string | null {
+    const lineId = lineForAdjustment.get(a_id);
+    if (!lineId) return null;
+    const line = lineItems?.find((l) => l.id === lineId);
+    return line?.subtype ?? null;
+  }
 
   const filtered = useMemo(() => {
     return (adjustments ?? []).filter((a) => {
@@ -139,7 +162,14 @@ export function InventoryLog() {
       ) : (
         <ul className="card divide-y divide-brass/20">
           {filtered.map((a) => {
-            const subtype = subtypeForAdjustment.get(a.id);
+            const subtype = subtypeForAdj(a.id);
+            const lineId = lineForAdjustment.get(a.id);
+            const product = products?.find((p) => p.id === a.product_id);
+            const canChangeSubtype =
+              isSold(a) &&
+              lineId &&
+              product &&
+              (product.subtypes ?? []).length > 0;
             return (
               <li
                 key={a.id}
@@ -153,9 +183,25 @@ export function InventoryLog() {
                   )}
                   <div className="font-ui truncate">
                     {productName(a.product_id)}
-                    {subtype && (
-                      <span className="text-walnut/60"> · {subtype}</span>
-                    )}
+                    {subtype || canChangeSubtype ? (
+                      canChangeSubtype ? (
+                        <button
+                          className="text-walnut/60 hover:text-walnut hover:underline ml-1"
+                          onClick={() =>
+                            setSubtypeEdit({
+                              line_item_id: lineId!,
+                              product_id: a.product_id,
+                              current: subtype,
+                            })
+                          }
+                          title="Change subtype"
+                        >
+                          · {subtype ?? '(set subtype)'}
+                        </button>
+                      ) : (
+                        subtype && <span className="text-walnut/60"> · {subtype}</span>
+                      )
+                    ) : null}
                   </div>
                   <div className="text-xs text-walnut/60">
                     {fmtDateTime(a.occurred_at)} · {a.reason}
@@ -187,6 +233,16 @@ export function InventoryLog() {
         </ul>
       )}
 
+      {subtypeEdit && (
+        <SubtypeChangeDialog
+          line_item_id={subtypeEdit.line_item_id}
+          product_id={subtypeEdit.product_id}
+          current={subtypeEdit.current}
+          products={products ?? []}
+          onClose={() => setSubtypeEdit(null)}
+        />
+      )}
+
       <Confirm
         open={!!pendingDelete}
         title={
@@ -213,5 +269,78 @@ export function InventoryLog() {
         }}
       />
     </div>
+  );
+}
+
+function SubtypeChangeDialog({
+  line_item_id,
+  product_id,
+  current,
+  products,
+  onClose,
+}: {
+  line_item_id: ID;
+  product_id: ID;
+  current: string | null;
+  products: { id: ID; subtypes?: string[]; name: string }[];
+  onClose: () => void;
+}) {
+  const product = products.find((p) => p.id === product_id);
+  const subtypes = product?.subtypes ?? [];
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    ref.current?.showModal();
+    return () => ref.current?.close();
+  }, []);
+
+  async function pick(s: string | null) {
+    await changeLineItemSubtype(line_item_id, s);
+    onClose();
+  }
+
+  return (
+    <dialog
+      ref={ref}
+      onClose={onClose}
+      className="rounded-lg p-0 bg-parchment-light text-walnut border border-brass/40 shadow-xl backdrop:bg-walnut-dark/60 w-[min(420px,calc(100vw-2rem))]"
+    >
+      <div className="p-5 space-y-3">
+        <h3 className="font-display text-lg">
+          Change subtype · {product?.name ?? ''}
+        </h3>
+        <p className="text-xs text-walnut/60">
+          Inventory of linked components will be adjusted automatically.
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          {subtypes.map((s) => (
+            <button
+              key={s}
+              className={`px-3 py-3 rounded-md border font-ui text-sm min-h-[44px] ${
+                current === s
+                  ? 'bg-brass-dark text-parchment-light border-brass-dark'
+                  : 'bg-parchment-light text-walnut border-walnut/30 hover:bg-parchment-dark'
+              }`}
+              onClick={() => pick(s)}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+        <button
+          className="block w-full text-sm text-walnut/60 hover:underline pt-1"
+          onClick={() => pick(null)}
+        >
+          Clear subtype
+        </button>
+        <div className="text-center pt-1">
+          <button
+            className="text-walnut/60 text-sm hover:underline"
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </dialog>
   );
 }
