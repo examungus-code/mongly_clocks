@@ -217,28 +217,25 @@ export function Sell() {
       </nav>
 
       {currentSubcategories.length > 0 && (
-        <ul className="card divide-y divide-brass/20 mb-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">
           {currentSubcategories.map((cat) => {
             const count = recursiveProductCount(cat.id);
             return (
-              <li key={cat.id}>
-                <button
-                  className="w-full px-3 py-3 flex items-center gap-3 text-left hover:bg-parchment-dark/40"
-                  onClick={() => setCwd(cat.id)}
-                >
-                  <span className="text-brass/70 text-lg leading-none">⚙</span>
-                  <span className="flex-1 font-ui font-medium truncate">
-                    {cat.name}
-                  </span>
-                  <span className="text-xs text-walnut/60">
-                    {count} item{count === 1 ? '' : 's'}
-                  </span>
-                  <span className="text-walnut/40">›</span>
-                </button>
-              </li>
+              <button
+                key={cat.id}
+                onClick={() => setCwd(cat.id)}
+                className="tile px-4 py-6 min-h-[120px] flex flex-col items-center justify-center text-center active:scale-95 transition-transform"
+              >
+                <span className="font-display text-xl sm:text-2xl text-walnut-dark leading-tight">
+                  {cat.name}
+                </span>
+                <span className="text-xs text-walnut/60 mt-1">
+                  {count} item{count === 1 ? '' : 's'}
+                </span>
+              </button>
             );
           })}
-        </ul>
+        </div>
       )}
 
       {currentProducts.length === 0 && currentSubcategories.length === 0 ? (
