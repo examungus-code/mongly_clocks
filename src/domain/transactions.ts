@@ -36,29 +36,30 @@ export interface CompleteTransactionInput {
  * mistakes at the booth — *not* refunds. Deletes:
  *   - the Transaction row
  *   - its TransactionLineItem rows
- *   - the 'sold' InventoryAdjustment rows referencing this transaction
+ *   - every InventoryAdjustment row tagged with this transaction id (sold +
+ *     sold_component)
  * and restores each affected product's quantity_on_hand by adding back the
- * deleted quantities.
- *
- * If she wants an actual refund audit trail later, that's a different
- * operation (record a refund adjustment, keep the original tx).
+ * net of every deleted adjustment. Driving restoration from the adjustments
+ * (not from line items) is what makes component decrements roll back too.
  */
 export async function deleteTransaction(tx_id: ID): Promise<void> {
   await db.transaction(
     'rw',
     [db.transactions, db.line_items, db.adjustments, db.products],
     async () => {
-      const lines = await db.line_items
+      const adjustments = await db.adjustments
         .where('transaction_id')
         .equals(tx_id)
         .toArray();
 
-      // Aggregate qty to restore per product so we make one update per product.
+      // Aggregate per-product reversal: negate the recorded delta. (A 'sold'
+      // adjustment is -N, so reversal is +N. A 'sold_component' adjustment is
+      // -1, so reversal is +1.)
       const restorePerProduct = new Map<ID, number>();
-      for (const line of lines) {
+      for (const adj of adjustments) {
         restorePerProduct.set(
-          line.product_id,
-          (restorePerProduct.get(line.product_id) ?? 0) + line.quantity
+          adj.product_id,
+          (restorePerProduct.get(adj.product_id) ?? 0) + -adj.delta
         );
       }
       for (const [product_id, delta] of restorePerProduct) {
@@ -70,15 +71,12 @@ export async function deleteTransaction(tx_id: ID): Promise<void> {
         });
       }
 
-      // Delete the adjustments tagged with this transaction id.
-      const soldIds = await db.adjustments
+      const lineIds = await db.line_items
         .where('transaction_id')
         .equals(tx_id)
         .primaryKeys();
-      await db.adjustments.bulkDelete(soldIds);
-
-      // Delete line items, then the transaction.
-      await db.line_items.bulkDelete(lines.map((l) => l.id));
+      await db.adjustments.bulkDelete(adjustments.map((a) => a.id));
+      await db.line_items.bulkDelete(lineIds);
       await db.transactions.delete(tx_id);
     }
   );
@@ -127,6 +125,8 @@ export async function completeTransaction(
       for (const line of input.lines) {
         const product = await db.products.get(line.product_id);
         if (!product) throw new Error(`product ${line.product_id} missing`);
+
+        // Main sold adjustment for the product itself.
         await db.adjustments.add({
           id: uuid(),
           product_id: line.product_id,
@@ -141,6 +141,32 @@ export async function completeTransaction(
           quantity_on_hand: product.quantity_on_hand - line.quantity,
           updated_at: Date.now(),
         });
+
+        // Subtype component link: decrement the linked product too. Hidden
+        // from the inventory log but still counts toward the linked
+        // product's qty. Note carries provenance for debugging.
+        const links = product.subtype_links ?? {};
+        const componentId =
+          line.subtype && links[line.subtype] ? links[line.subtype] : null;
+        if (componentId) {
+          const component = await db.products.get(componentId);
+          if (component) {
+            await db.adjustments.add({
+              id: uuid(),
+              product_id: componentId,
+              delta: -line.quantity,
+              reason: 'sold_component',
+              transaction_id: txId,
+              note: `from ${product.name} · ${line.subtype}`,
+              occurred_at: now,
+              created_at: Date.now(),
+            });
+            await db.products.update(componentId, {
+              quantity_on_hand: component.quantity_on_hand - line.quantity,
+              updated_at: Date.now(),
+            });
+          }
+        }
       }
     }
   );

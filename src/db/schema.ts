@@ -39,12 +39,20 @@ export interface Product {
   // must pick one before the sale records.
   subtypes: string[];
   default_subtype: string | null;
+  // Optional component-product link per subtype. When the necklace is sold
+  // with subtype 'gold', the linked product (e.g. "gold chain") is also
+  // decremented from inventory via a 'sold_component' adjustment. Keys are
+  // subtype names; missing key = no link. When she renames a subtype the
+  // key follows; when she removes a subtype the key is dropped on save.
+  subtype_links: Record<string, ID>;
   created_at: number;
   updated_at: number;
 }
 
 export type AdjustmentReason =
   | 'sold'
+  | 'sold_component' // Decrement of a component linked to a sold product's subtype.
+                     // Hidden from the inventory log; still counts toward qty.
   | 'lost'
   | 'broken'
   | 'restocked'
@@ -168,4 +176,8 @@ export const db = new ClockworkDB();
 // migration is needed; pull will refuse a cloud copy with a higher version.
 // v2: Product.subtypes / Product.default_subtype, TransactionLineItem.subtype.
 //     Older devices missing these fields handle them as empty / null.
-export const SCHEMA_VERSION = 2;
+// v3: Product.subtype_links, 'sold_component' AdjustmentReason. Older
+//     devices ignore unknown fields and unknown reasons just render as text;
+//     refusing the pull is still the safe move because they'd miss the
+//     component side-effects on sales.
+export const SCHEMA_VERSION = 3;

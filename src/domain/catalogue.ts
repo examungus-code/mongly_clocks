@@ -203,6 +203,7 @@ export interface NewProductInput {
   photo_file: File | null;
   subtypes: string[];
   default_subtype: string | null;
+  subtype_links: Record<string, ID>;
 }
 
 export async function createProduct(input: NewProductInput): Promise<ID> {
@@ -222,6 +223,7 @@ export async function createProduct(input: NewProductInput): Promise<ID> {
   const maxOrder = siblings.reduce((m, p) => Math.max(m, p.sort_order), -1);
 
   await db.transaction('rw', [db.products, db.adjustments], async () => {
+    const cleanedSubtypes = normalizeSubtypes(input.subtypes);
     await db.products.add({
       id,
       category_id: input.category_id,
@@ -232,8 +234,9 @@ export async function createProduct(input: NewProductInput): Promise<ID> {
       photo_id,
       sort_order: maxOrder + 1,
       archived: false,
-      subtypes: normalizeSubtypes(input.subtypes),
+      subtypes: cleanedSubtypes,
       default_subtype: input.default_subtype,
+      subtype_links: pruneLinks(input.subtype_links, cleanedSubtypes),
       created_at: now,
       updated_at: now,
     });
@@ -264,6 +267,7 @@ export interface UpdateProductInput {
   category_id?: ID;
   subtypes?: string[];
   default_subtype?: string | null;
+  subtype_links?: Record<string, ID>;
 }
 
 export async function updateProduct(
@@ -283,6 +287,13 @@ export async function updateProduct(
     patch.subtypes = normalizeSubtypes(input.subtypes);
   if (input.default_subtype !== undefined)
     patch.default_subtype = input.default_subtype;
+  if (input.subtype_links !== undefined) {
+    // Prune links whose subtype no longer exists. Use the post-normalize
+    // subtypes if the caller is also updating subtypes; otherwise fall back
+    // to the existing product's subtypes.
+    const subs = patch.subtypes ?? existing.subtypes ?? [];
+    patch.subtype_links = pruneLinks(input.subtype_links, subs);
+  }
 
   await db.transaction('rw', [db.products, db.photos], async () => {
     if (input.photo_file !== undefined) {
@@ -324,12 +335,26 @@ function normalizeSubtypes(subtypes: string[]): string[] {
   return out;
 }
 
-/** Use everywhere the UI reads a product, to handle pre-v2 rows missing fields. */
+/** Drop any link whose subtype name isn't in the current subtypes list. */
+function pruneLinks(
+  links: Record<string, ID>,
+  subtypes: string[]
+): Record<string, ID> {
+  const allowed = new Set(subtypes);
+  const out: Record<string, ID> = {};
+  for (const [k, v] of Object.entries(links)) {
+    if (allowed.has(k) && v) out[k] = v;
+  }
+  return out;
+}
+
+/** Use everywhere the UI reads a product, to handle pre-v3 rows missing fields. */
 export function withSubtypeDefaults(p: Product): Product {
   return {
     ...p,
     subtypes: p.subtypes ?? [],
     default_subtype: p.default_subtype ?? null,
+    subtype_links: p.subtype_links ?? {},
   };
 }
 

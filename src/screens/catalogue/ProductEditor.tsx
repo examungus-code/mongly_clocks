@@ -44,6 +44,17 @@ export function ProductEditor(props: Props) {
   const [defaultSubtype, setDefaultSubtype] = useState<string | null>(
     existing?.default_subtype ?? null
   );
+  // Component links per subtype (subtype name -> linked product id). Renames
+  // and removals are reflected here in the rename/delete handlers below.
+  const [subtypeLinks, setSubtypeLinks] = useState<Record<string, ID>>(
+    existing?.subtype_links ?? {}
+  );
+
+  // Catalogue of all other products, for the "links to" dropdown.
+  const allProducts = useLiveQuery(() => db.products.toArray());
+  const linkableProducts = (allProducts ?? []).filter(
+    (p) => !p.archived && p.id !== existing?.id
+  );
 
   const dialogRef = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -83,6 +94,13 @@ export function ProductEditor(props: Props) {
       ? defaultSubtype
       : null;
 
+  // Strip links whose key isn't in the cleaned subtypes list (catches renames
+  // we missed and removals).
+  const effectiveLinks: Record<string, ID> = {};
+  for (const s of cleanSubtypes) {
+    if (subtypeLinks[s]) effectiveLinks[s] = subtypeLinks[s];
+  }
+
   async function handleSave() {
     const priceNum = parseFloat(price);
     if (!name.trim() || isNaN(priceNum) || priceNum < 0) return;
@@ -99,6 +117,7 @@ export function ProductEditor(props: Props) {
           photo_file: photoFile,
           subtypes: cleanSubtypes,
           default_subtype: effectiveDefault,
+          subtype_links: effectiveLinks,
         });
       } else {
         await updateProduct(props.product.id, {
@@ -108,6 +127,7 @@ export function ProductEditor(props: Props) {
           photo_file: photoCleared ? null : (photoFile ?? undefined),
           subtypes: cleanSubtypes,
           default_subtype: effectiveDefault,
+          subtype_links: effectiveLinks,
         });
       }
       props.onSaved();
@@ -239,20 +259,29 @@ export function ProductEditor(props: Props) {
             <p className="text-xs text-walnut/60">
               Leave empty if this product has no variants. Add subtypes (e.g.
               silver / gold / copper) to make the operator pick one at sale
-              time.
+              time. Each subtype can optionally link to another product
+              (a “component”) that is auto-decremented from inventory when
+              this subtype is sold — useful for things like chains.
             </p>
           ) : (
             <>
               <p className="text-xs text-walnut/60">
                 Pick a default below, or leave “No default” to force the
-                operator to choose at sale time.
+                operator to choose at sale time. The dropdown next to each
+                subtype optionally links a component product (e.g. gold
+                chain) that will be deducted from inventory automatically
+                when that subtype sells.
               </p>
-              <ul className="space-y-1.5">
+              <ul className="space-y-2">
                 {subtypes.map((sub, i) => {
                   const trimmed = sub.trim();
                   const isDefault = !!trimmed && defaultSubtype === trimmed;
+                  const linkedId = trimmed ? subtypeLinks[trimmed] ?? '' : '';
                   return (
-                    <li key={i} className="flex items-center gap-2">
+                    <li
+                      key={i}
+                      className="grid grid-cols-[auto_1fr_auto] sm:grid-cols-[auto_1fr_1fr_auto] gap-2 items-center"
+                    >
                       <input
                         type="radio"
                         name="default-subtype"
@@ -262,27 +291,65 @@ export function ProductEditor(props: Props) {
                         title="Default at sale time"
                       />
                       <input
-                        className="input !min-h-0 !py-1.5 flex-1"
+                        className="input !min-h-0 !py-1.5"
                         placeholder="Subtype name"
                         value={sub}
                         onChange={(e) => {
+                          const oldKey = sub.trim();
+                          const newKey = e.target.value.trim();
                           const next = [...subtypes];
                           next[i] = e.target.value;
-                          // If the renamed value was the default, follow the rename.
-                          if (defaultSubtype === sub.trim()) {
-                            setDefaultSubtype(e.target.value.trim());
+                          if (defaultSubtype === oldKey) {
+                            setDefaultSubtype(newKey);
+                          }
+                          // Carry the existing link to the renamed key.
+                          if (oldKey !== newKey && subtypeLinks[oldKey]) {
+                            const updated = { ...subtypeLinks };
+                            updated[newKey] = updated[oldKey];
+                            delete updated[oldKey];
+                            setSubtypeLinks(updated);
                           }
                           setSubtypes(next);
                         }}
                       />
+                      <select
+                        className="input !min-h-0 !py-1.5 col-span-2 sm:col-span-1"
+                        value={linkedId}
+                        disabled={!trimmed}
+                        onChange={(e) => {
+                          if (!trimmed) return;
+                          const updated = { ...subtypeLinks };
+                          if (e.target.value) {
+                            updated[trimmed] = e.target.value;
+                          } else {
+                            delete updated[trimmed];
+                          }
+                          setSubtypeLinks(updated);
+                        }}
+                        title="Linked component product (decremented from inventory when this subtype is sold)"
+                      >
+                        <option value="">
+                          {trimmed ? '— no linked component —' : '(name first)'}
+                        </option>
+                        {linkableProducts.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            ↳ {p.name}
+                          </option>
+                        ))}
+                      </select>
                       <button
                         type="button"
-                        className="text-copper text-sm px-1"
+                        className="text-copper text-sm px-1 col-start-3 sm:col-start-4"
                         onClick={() => {
                           const next = subtypes.filter((_, j) => j !== i);
                           setSubtypes(next);
                           if (defaultSubtype === sub.trim()) {
                             setDefaultSubtype(null);
+                          }
+                          if (sub.trim() && subtypeLinks[sub.trim()]) {
+                            const updated = { ...subtypeLinks };
+                            delete updated[sub.trim()];
+                            setSubtypeLinks(updated);
                           }
                         }}
                         title="Remove"

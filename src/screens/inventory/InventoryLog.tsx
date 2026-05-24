@@ -21,8 +21,17 @@ const REASONS: { value: AdjustmentReason | ''; label: string }[] = [
 ];
 
 export function InventoryLog() {
+  // 'sold_component' adjustments are intentionally hidden from this view —
+  // they're the auto-decrement of a linked component product (e.g. a gold
+  // chain consumed by a necklace sale). They still affect quantities and
+  // sync to Drive; they just don't deserve their own line here because the
+  // parent sale row already tells the story via its subtype suffix.
   const adjustments = useLiveQuery(() =>
-    db.adjustments.orderBy('occurred_at').reverse().toArray()
+    db.adjustments
+      .orderBy('occurred_at')
+      .reverse()
+      .filter((a) => a.reason !== 'sold_component')
+      .toArray()
   );
   const products = useLiveQuery(() => db.products.toArray());
   const lineItems = useLiveQuery(() => db.line_items.toArray());
