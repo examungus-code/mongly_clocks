@@ -5,9 +5,9 @@ import { fmtRelative } from '../../utils/format';
 
 const TILES = [
   { to: '/sell', label: 'Sell', desc: 'Record sales at the booth', icon: '🔑' },
-  { to: '/catalogue', label: 'Catalogue', desc: 'Manage designs & categories', icon: '⏱' },
-  { to: '/sold', label: 'Sold', desc: 'Per-product totals & export', icon: '🕰' },
   { to: '/history', label: 'History', desc: 'Every inventory adjustment', icon: '⚖' },
+  { to: '/sold', label: 'Sold', desc: 'Per-product totals & export', icon: '🕰' },
+  { to: '/catalogue', label: 'Catalogue', desc: 'Manage designs & categories', icon: '⏱' },
   { to: '/sync', label: 'Sync', desc: 'Push & pull from Drive', icon: '↻' },
   { to: '/settings', label: 'Settings', desc: 'Festivals & device', icon: '✦' },
 ];

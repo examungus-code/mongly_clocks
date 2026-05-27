@@ -4,9 +4,9 @@ import type { ReactNode } from 'react';
 const NAV = [
   { to: '/', label: 'Home', icon: '⚙' },
   { to: '/sell', label: 'Sell', icon: '🔑' },
-  { to: '/catalogue', label: 'Catalogue', icon: '⏱' },
-  { to: '/sold', label: 'Sold', icon: '🕰' },
   { to: '/history', label: 'History', icon: '⚖' },
+  { to: '/sold', label: 'Sold', icon: '🕰' },
+  { to: '/catalogue', label: 'Catalogue', icon: '⏱' },
   { to: '/sync', label: 'Sync', icon: '↻' },
   { to: '/settings', label: 'Settings', icon: '✦' },
 ];
