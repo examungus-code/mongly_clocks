@@ -1,155 +1,324 @@
+// History — hierarchical sold-quantity view.
+//
+// Categories form an indented bulleted tree; products are the leaves. Each
+// row shows the name on the left and the qty sold on the right. Category
+// counts are recursive sums of every product inside (including sub-categories).
+// A session dropdown at the top filters everything, or shows totals across
+// all sessions.
+
 import { useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type ID } from '../../db/schema';
-import { fmtDateTime } from '../../utils/format';
+import { type CategoryNode } from '../../domain/catalogue';
 import { downloadCsv, toCsv } from '../../utils/csv-export';
 
 export function History() {
-  const transactions = useLiveQuery(() =>
-    db.transactions.orderBy('occurred_at').reverse().toArray()
-  );
-  const lineItems = useLiveQuery(() => db.line_items.toArray());
+  const categories = useLiveQuery(() => db.categories.toArray());
   const products = useLiveQuery(() => db.products.toArray());
+  const transactions = useLiveQuery(() => db.transactions.toArray());
+  const lineItems = useLiveQuery(() => db.line_items.toArray());
+  const sessions = useLiveQuery(() =>
+    db.session_records.orderBy('started_at').reverse().toArray()
+  );
   const festivals = useLiveQuery(() => db.festivals.toArray());
 
-  const [festivalFilter, setFestivalFilter] = useState<string>('');
-  const [expanded, setExpanded] = useState<ID | null>(null);
+  const [selectedSession, setSelectedSession] = useState<string>('total');
+  const [collapsed, setCollapsed] = useState<Set<ID>>(new Set());
 
-  const productName = (id: ID) => products?.find((p) => p.id === id)?.name ?? id;
-  const festivalName = (id: ID | null) =>
-    id ? festivals?.find((f) => f.id === id)?.name ?? '—' : '—';
-
-  const filtered = useMemo(() => {
-    return (transactions ?? []).filter((t) => {
-      if (festivalFilter && t.festival_id !== festivalFilter) return false;
-      return true;
-    });
-  }, [transactions, festivalFilter]);
-
-  const linesByTx = useMemo(() => {
-    const map = new Map<ID, typeof lineItems>();
-    for (const l of lineItems ?? []) {
-      if (!map.has(l.transaction_id)) map.set(l.transaction_id, []);
-      map.get(l.transaction_id)!.push(l);
+  // soldByProduct = map of product_id -> qty sold in the selected session
+  // (or across all sessions when 'total' is selected). Same shape as the
+  // Catalogue page so behavior is consistent.
+  const soldByProduct = useMemo(() => {
+    const map = new Map<ID, number>();
+    if (!transactions || !lineItems) return map;
+    let txIds: Set<ID> | null = null;
+    if (selectedSession !== 'total') {
+      const session = sessions?.find((s) => s.id === selectedSession);
+      if (!session) return map;
+      const start = session.started_at;
+      const end = session.ended_at ?? Infinity;
+      txIds = new Set(
+        transactions
+          .filter((t) => t.occurred_at >= start && t.occurred_at <= end)
+          .map((t) => t.id)
+      );
+    }
+    for (const line of lineItems) {
+      if (txIds && !txIds.has(line.transaction_id)) continue;
+      map.set(
+        line.product_id,
+        (map.get(line.product_id) ?? 0) + line.quantity
+      );
     }
     return map;
-  }, [lineItems]);
+  }, [transactions, lineItems, sessions, selectedSession]);
 
-  function exportCsv() {
-    const rows: Record<string, unknown>[] = [];
-    for (const tx of filtered) {
-      const lines = linesByTx.get(tx.id) ?? [];
-      for (const line of lines) {
-        rows.push({
-          transaction_id: tx.id,
-          occurred_at: new Date(tx.occurred_at).toISOString(),
-          festival: festivalName(tx.festival_id),
-          product: productName(line.product_id),
-          subtype: line.subtype ?? '',
-          quantity: line.quantity,
-          note: tx.note,
-        });
-      }
-    }
-    const csv = toCsv(rows, [
-      'transaction_id',
-      'occurred_at',
-      'festival',
-      'product',
-      'subtype',
-      'quantity',
-      'note',
-    ]);
-    const stamp = new Date().toISOString().slice(0, 10);
-    downloadCsv(`clockwork-history-${stamp}.csv`, csv);
+  // Build the category tree once. We include ALL products (even archived
+  // ones with past sales) so historical numbers stay accurate. Empty
+  // categories still render so the structure stays predictable.
+  const tree = useMemo(
+    () =>
+      categories && products
+        ? buildTreeIncludingArchived(categories, products)
+        : null,
+    [categories, products]
+  );
+
+  function recursiveCount(node: CategoryNode): number {
+    let total = 0;
+    for (const p of node.products) total += soldByProduct.get(p.id) ?? 0;
+    for (const c of node.children) total += recursiveCount(c);
+    return total;
   }
 
-  const totalCount = filtered.length;
-  const totalItems = filtered.reduce(
-    (s, tx) =>
-      s +
-      (linesByTx.get(tx.id) ?? []).reduce((acc, l) => acc + l.quantity, 0),
-    0
-  );
+  function toggle(id: ID) {
+    setCollapsed((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function sessionLabel(s: {
+    festival_id: ID | null;
+    started_at: number;
+    ended_at: number | null;
+  }): string {
+    const festName = s.festival_id
+      ? festivals?.find((f) => f.id === s.festival_id)?.name ?? '—'
+      : '—';
+    const d = new Date(s.started_at).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+    const suffix = s.ended_at === null ? ' · active' : '';
+    return `${festName} · ${d}${suffix}`;
+  }
+
+  function exportCsv() {
+    if (!tree) return;
+    // CSV rows: full category path + product + quantity. One row per product
+    // with at least one sale; categories themselves aren't emitted (they're
+    // implicit in the path column).
+    const rows: Record<string, unknown>[] = [];
+    function walk(node: CategoryNode, path: string[]) {
+      const here = [...path, node.name];
+      for (const p of node.products) {
+        const qty = soldByProduct.get(p.id) ?? 0;
+        if (qty === 0) continue;
+        rows.push({
+          category: here.join(' / '),
+          product: p.name,
+          quantity: qty,
+        });
+      }
+      for (const c of node.children) walk(c, here);
+    }
+    for (const n of tree) walk(n, []);
+    if (rows.length === 0) return;
+    const csv = toCsv(rows, ['category', 'product', 'quantity']);
+    const sessionTag =
+      selectedSession === 'total'
+        ? 'all-sessions'
+        : sessions?.find((s) => s.id === selectedSession)
+          ? new Date(
+              sessions.find((s) => s.id === selectedSession)!.started_at
+            )
+              .toISOString()
+              .slice(0, 10)
+          : 'session';
+    downloadCsv(`clockwork-history-${sessionTag}.csv`, csv);
+  }
+
+  if (!tree) return <div>Loading…</div>;
+
+  const grandTotal = tree.reduce((s, n) => s + recursiveCount(n), 0);
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-2xl">History</h2>
-        <button className="btn-primary" onClick={exportCsv} disabled={filtered.length === 0}>
+        <button
+          className="btn-primary"
+          onClick={exportCsv}
+          disabled={grandTotal === 0}
+        >
           Export CSV
         </button>
       </div>
 
-      <div className="card p-3 grid grid-cols-2 gap-3">
-        <div>
-          <label className="label">Festival</label>
-          <select
-            className="input"
-            value={festivalFilter}
-            onChange={(e) => setFestivalFilter(e.target.value)}
-          >
-            <option value="">All</option>
-            {festivals?.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="self-end text-right text-sm">
-          <span className="text-walnut/60">
-            {totalCount} sale{totalCount === 1 ? '' : 's'} ·{' '}
-          </span>
-          <strong className="font-display text-base">
-            {totalItems} item{totalItems === 1 ? '' : 's'}
+      <div className="flex items-center gap-3 flex-wrap">
+        <label className="text-sm font-ui text-walnut/70">Session</label>
+        <select
+          className="input !min-h-0 !py-1.5 max-w-xs"
+          value={selectedSession}
+          onChange={(e) => setSelectedSession(e.target.value)}
+        >
+          <option value="total">Total (all sessions)</option>
+          {sessions?.map((s) => (
+            <option key={s.id} value={s.id}>
+              {sessionLabel(s)}
+            </option>
+          ))}
+        </select>
+        <span className="text-sm text-walnut/70 ml-auto">
+          Total sold:{' '}
+          <strong className="font-display text-base text-walnut">
+            {grandTotal}
           </strong>
-        </div>
+        </span>
       </div>
 
-      {filtered.length === 0 ? (
-        <p className="text-walnut/60 text-center py-8">No transactions match.</p>
+      {tree.length === 0 ? (
+        <p className="text-walnut/60 text-center py-8">No catalogue yet.</p>
       ) : (
-        <ul className="space-y-2">
-          {filtered.map((tx) => {
-            const lines = linesByTx.get(tx.id) ?? [];
-            const qty = lines.reduce((s, l) => s + l.quantity, 0);
-            return (
-              <li key={tx.id} className="card">
-                <button
-                  className="w-full text-left p-3 grid grid-cols-[1fr_auto_auto] gap-3 items-center hover:bg-parchment-dark/40"
-                  onClick={() => setExpanded(expanded === tx.id ? null : tx.id)}
-                >
-                  <span className="text-sm">{fmtDateTime(tx.occurred_at)}</span>
-                  <span className="text-sm text-walnut/70 truncate hidden sm:inline">
-                    {festivalName(tx.festival_id)}
-                  </span>
-                  <span className="font-display text-right">
-                    {qty} item{qty === 1 ? '' : 's'}
-                  </span>
-                </button>
-                {expanded === tx.id && (
-                  <div className="border-t border-brass/30 p-3 text-sm space-y-1">
-                    {lines.map((l) => (
-                      <div key={l.id}>
-                        {l.quantity} × {productName(l.product_id)}
-                        {l.subtype && (
-                          <span className="text-walnut/60"> · {l.subtype}</span>
-                        )}
-                      </div>
-                    ))}
-                    {tx.note && (
-                      <div className="text-walnut/60 italic pt-1">
-                        “{tx.note}”
-                      </div>
-                    )}
-                  </div>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+        <div className="card divide-y divide-brass/20">
+          {tree.map((node) => (
+            <Row
+              key={node.id}
+              node={node}
+              depth={0}
+              soldByProduct={soldByProduct}
+              recursiveCount={recursiveCount}
+              collapsed={collapsed}
+              onToggle={toggle}
+            />
+          ))}
+        </div>
       )}
     </div>
   );
+}
+
+function Row({
+  node,
+  depth,
+  soldByProduct,
+  recursiveCount,
+  collapsed,
+  onToggle,
+}: {
+  node: CategoryNode;
+  depth: number;
+  soldByProduct: Map<ID, number>;
+  recursiveCount: (n: CategoryNode) => number;
+  collapsed: Set<ID>;
+  onToggle: (id: ID) => void;
+}) {
+  const total = recursiveCount(node);
+  const isCollapsed = collapsed.has(node.id);
+  const hasChildren = node.products.length > 0 || node.children.length > 0;
+  const indent = depth * 16;
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => hasChildren && onToggle(node.id)}
+        className={`w-full grid grid-cols-[1fr_auto] gap-3 items-center px-3 py-2 text-left ${
+          hasChildren ? 'hover:bg-brass-tint cursor-pointer' : 'cursor-default'
+        }`}
+        style={{ paddingLeft: indent + 12 }}
+      >
+        <span className="flex items-center gap-1 font-ui font-medium truncate">
+          <span className="text-walnut/40 text-xs w-3 inline-block">
+            {hasChildren ? (isCollapsed ? '▸' : '▾') : '•'}
+          </span>
+          {node.name}
+        </span>
+        <span
+          className={`text-sm tabular-nums ${
+            total > 0 ? 'text-walnut' : 'text-walnut/30'
+          }`}
+        >
+          {total}
+        </span>
+      </button>
+      {!isCollapsed && (
+        <>
+          {node.products.map((p) => {
+            const qty = soldByProduct.get(p.id) ?? 0;
+            return (
+              <div
+                key={p.id}
+                className="grid grid-cols-[1fr_auto] gap-3 items-center px-3 py-1.5 text-sm"
+                style={{ paddingLeft: indent + 12 + 16 }}
+              >
+                <span className="flex items-center gap-1 truncate">
+                  <span className="text-walnut/30 text-xs w-3 inline-block">
+                    ◦
+                  </span>
+                  <span className={p.archived ? 'text-walnut/50 italic' : ''}>
+                    {p.name}
+                    {p.archived && ' (archived)'}
+                  </span>
+                </span>
+                <span
+                  className={`tabular-nums ${
+                    qty > 0 ? 'text-walnut' : 'text-walnut/30'
+                  }`}
+                >
+                  {qty}
+                </span>
+              </div>
+            );
+          })}
+          {node.children.map((child) => (
+            <Row
+              key={child.id}
+              node={child}
+              depth={depth + 1}
+              soldByProduct={soldByProduct}
+              recursiveCount={recursiveCount}
+              collapsed={collapsed}
+              onToggle={onToggle}
+            />
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Like buildTree from the domain layer, but INCLUDES archived products so
+ * their historical sales still show. The catalogue editor hides archived
+ * products; the history page must not.
+ */
+function buildTreeIncludingArchived(
+  categories: import('../../db/schema').Category[],
+  products: import('../../db/schema').Product[]
+): CategoryNode[] {
+  const nodes = new Map<ID, CategoryNode>();
+  categories.forEach((c) =>
+    nodes.set(c.id, { ...c, children: [], products: [] })
+  );
+  const roots: CategoryNode[] = [];
+  for (const node of nodes.values()) {
+    if (node.parent_id && nodes.has(node.parent_id)) {
+      nodes.get(node.parent_id)!.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+  for (const p of products) {
+    nodes.get(p.category_id)?.products.push(p);
+  }
+  const sortRec = (list: CategoryNode[]) => {
+    list.sort(
+      (a, b) =>
+        a.sort_order - b.sort_order || a.name.localeCompare(b.name)
+    );
+    list.forEach((n) => {
+      sortRec(n.children);
+      n.products.sort(
+        (a, b) =>
+          a.sort_order - b.sort_order || a.name.localeCompare(b.name)
+      );
+    });
+  };
+  sortRec(roots);
+  return roots;
 }
