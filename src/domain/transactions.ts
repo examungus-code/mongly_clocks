@@ -110,7 +110,15 @@ export async function completeTransaction(
 
   await db.transaction(
     'rw',
-    [db.transactions, db.line_items, db.adjustments, db.products],
+    // db.categories is read-only here but must be in scope because the
+    // subtype-config resolver walks the category tree.
+    [
+      db.transactions,
+      db.line_items,
+      db.adjustments,
+      db.products,
+      db.categories,
+    ],
     async () => {
       await db.transactions.add(tx);
       await db.line_items.bulkAdd(lineRows);
@@ -192,7 +200,7 @@ export async function changeLineItemSubtype(
 ): Promise<void> {
   await db.transaction(
     'rw',
-    [db.line_items, db.adjustments, db.products],
+    [db.line_items, db.adjustments, db.products, db.categories],
     async () => {
       const line = await db.line_items.get(line_item_id);
       if (!line) throw new Error('line item not found');

@@ -117,18 +117,25 @@ export function Sell() {
   }
 
   async function sellNow(product: Product, subtype: string | null) {
-    await completeTransaction({
-      lines: [
-        {
-          product_id: product.id,
-          product_name: product.name,
-          quantity: 1,
-          subtype,
-        },
-      ],
-      festival_id: session?.festival_id ?? null,
-    });
-    showToast(product.name + (subtype ? ` · ${subtype}` : ''));
+    try {
+      await completeTransaction({
+        lines: [
+          {
+            product_id: product.id,
+            product_name: product.name,
+            quantity: 1,
+            subtype,
+          },
+        ],
+        festival_id: session?.festival_id ?? null,
+      });
+      showToast(product.name + (subtype ? ` · ${subtype}` : ''));
+    } catch (err) {
+      console.error('sale failed', err);
+      alert(
+        `Sale failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
 
   function handleTileTap(product: Product) {
