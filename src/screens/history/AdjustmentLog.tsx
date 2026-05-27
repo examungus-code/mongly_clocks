@@ -25,7 +25,7 @@ const REASONS: { value: AdjustmentReason | ''; label: string }[] = [
   { value: 'manual_correction', label: 'Manual correction' },
 ];
 
-export function InventoryLog() {
+export function AdjustmentLog() {
   // 'sold_component' adjustments are intentionally hidden from this view —
   // they're the auto-decrement of a linked component product (e.g. a gold
   // chain consumed by a necklace sale). They still affect quantities and
@@ -122,7 +122,7 @@ export function InventoryLog() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-2xl">Inventory adjustments</h2>
+      <h2 className="text-2xl">History</h2>
 
       <div className="card p-3 grid grid-cols-2 gap-3">
         <div>

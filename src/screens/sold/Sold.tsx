@@ -1,10 +1,16 @@
-// History — hierarchical sold-quantity view.
+// Sold — hierarchical sold-quantity view.
 //
 // Categories form an indented bulleted tree; products are the leaves. Each
 // row shows the name on the left and the qty sold on the right. Category
 // counts are recursive sums of every product inside (including sub-categories).
 // A session dropdown at the top filters everything, or shows totals across
 // all sessions.
+//
+// Per-product counts include both regular line-item sales AND component
+// decrements via 'sold_component' adjustments — so e.g. a "silver chain"
+// that's only ever consumed inside silver necklaces still shows accurate
+// totals here. This is the opposite of the AdjustmentLog page, which hides
+// those component decrements because they'd duplicate the necklace row.
 
 import { useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
@@ -12,11 +18,16 @@ import { db, type ID } from '../../db/schema';
 import { type CategoryNode } from '../../domain/catalogue';
 import { downloadCsv, toCsv } from '../../utils/csv-export';
 
-export function History() {
+export function Sold() {
   const categories = useLiveQuery(() => db.categories.toArray());
   const products = useLiveQuery(() => db.products.toArray());
   const transactions = useLiveQuery(() => db.transactions.toArray());
   const lineItems = useLiveQuery(() => db.line_items.toArray());
+  // Pull sold_component adjustments separately so components consumed via
+  // subtype links also count toward their product's sold total.
+  const componentAdjustments = useLiveQuery(() =>
+    db.adjustments.where('reason').equals('sold_component').toArray()
+  );
   const sessions = useLiveQuery(() =>
     db.session_records.orderBy('started_at').reverse().toArray()
   );
@@ -26,8 +37,9 @@ export function History() {
   const [collapsed, setCollapsed] = useState<Set<ID>>(new Set());
 
   // soldByProduct = map of product_id -> qty sold in the selected session
-  // (or across all sessions when 'total' is selected). Same shape as the
-  // Catalogue page so behavior is consistent.
+  // (or across all sessions when 'total' is selected). Includes both line
+  // items (regular sales) and sold_component adjustments (chains decremented
+  // because a necklace they're linked to was sold).
   const soldByProduct = useMemo(() => {
     const map = new Map<ID, number>();
     if (!transactions || !lineItems) return map;
@@ -50,8 +62,17 @@ export function History() {
         (map.get(line.product_id) ?? 0) + line.quantity
       );
     }
+    for (const adj of componentAdjustments ?? []) {
+      if (!adj.transaction_id) continue;
+      if (txIds && !txIds.has(adj.transaction_id)) continue;
+      // delta is negative for 'sold_component'; flip to get qty consumed.
+      map.set(
+        adj.product_id,
+        (map.get(adj.product_id) ?? 0) + -adj.delta
+      );
+    }
     return map;
-  }, [transactions, lineItems, sessions, selectedSession]);
+  }, [transactions, lineItems, componentAdjustments, sessions, selectedSession]);
 
   // Build the category tree once. We include ALL products (even archived
   // ones with past sales) so historical numbers stay accurate. Empty
@@ -139,7 +160,7 @@ export function History() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h2 className="text-2xl">History</h2>
+        <h2 className="text-2xl">Sold</h2>
         <button
           className="btn-primary"
           onClick={exportCsv}
