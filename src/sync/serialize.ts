@@ -10,7 +10,6 @@ import type {
   Category,
   Festival,
   InventoryAdjustment,
-  PaymentType,
   Product,
   SessionRecord,
   Transaction,
@@ -26,7 +25,6 @@ export interface SnapshotPayload {
   transactions: Transaction[];
   line_items: TransactionLineItem[];
   festivals: Festival[];
-  payment_types: PaymentType[];
   session_records: SessionRecord[];
   photos: Array<{ id: string; ext: string }>;
 }
@@ -39,7 +37,6 @@ export async function snapshotLocal(): Promise<SnapshotPayload> {
     transactions,
     line_items,
     festivals,
-    payment_types,
     session_records,
     photos,
   ] = await Promise.all([
@@ -49,7 +46,6 @@ export async function snapshotLocal(): Promise<SnapshotPayload> {
     db.transactions.toArray(),
     db.line_items.toArray(),
     db.festivals.toArray(),
-    db.payment_types.toArray(),
     db.session_records.toArray(),
     db.photos.toArray(),
   ]);
@@ -63,7 +59,6 @@ export async function snapshotLocal(): Promise<SnapshotPayload> {
     transactions,
     line_items,
     festivals,
-    payment_types,
     session_records,
     photos: photos.map((p) => ({
       id: p.id,
@@ -85,7 +80,6 @@ export async function restoreLocal(
       db.transactions,
       db.line_items,
       db.festivals,
-      db.payment_types,
       db.session_records,
       db.photos,
     ],
@@ -97,7 +91,6 @@ export async function restoreLocal(
         db.transactions.clear(),
         db.line_items.clear(),
         db.festivals.clear(),
-        db.payment_types.clear(),
         db.session_records.clear(),
         db.photos.clear(),
       ]);
@@ -107,7 +100,6 @@ export async function restoreLocal(
       await db.transactions.bulkAdd(snapshot.transactions);
       await db.line_items.bulkAdd(snapshot.line_items);
       await db.festivals.bulkAdd(snapshot.festivals);
-      await db.payment_types.bulkAdd(snapshot.payment_types);
       // Older snapshots may not include session_records; default to [].
       await db.session_records.bulkAdd(snapshot.session_records ?? []);
       for (const [id, file] of freshPhotos) {

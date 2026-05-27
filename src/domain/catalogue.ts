@@ -198,7 +198,6 @@ export interface NewProductInput {
   category_id: ID;
   name: string;
   description: string;
-  list_price: number;
   initial_quantity: number;
   photo_file: File | null;
   subtypes: string[];
@@ -229,7 +228,6 @@ export async function createProduct(input: NewProductInput): Promise<ID> {
       category_id: input.category_id,
       name: input.name.trim(),
       description: input.description.trim(),
-      list_price: input.list_price,
       quantity_on_hand: 0, // will be set by adjustment below
       photo_id,
       sort_order: maxOrder + 1,
@@ -262,7 +260,6 @@ export async function createProduct(input: NewProductInput): Promise<ID> {
 export interface UpdateProductInput {
   name?: string;
   description?: string;
-  list_price?: number;
   photo_file?: File | null; // null = clear photo, undefined = no change
   category_id?: ID;
   subtypes?: string[];
@@ -281,7 +278,6 @@ export async function updateProduct(
   if (input.name !== undefined) patch.name = input.name.trim();
   if (input.description !== undefined)
     patch.description = input.description.trim();
-  if (input.list_price !== undefined) patch.list_price = input.list_price;
   if (input.category_id !== undefined) patch.category_id = input.category_id;
   if (input.subtypes !== undefined)
     patch.subtypes = normalizeSubtypes(input.subtypes);

@@ -1,6 +1,6 @@
-// First-run seed: payment types, an empty session row, sync metadata row, and
-// a device label derived from the user agent so multiple devices have distinct
-// labels in the sync indicator.
+// First-run seed: session singleton, sync metadata row, and a device label
+// derived from the user agent so multiple devices have distinct labels in the
+// sync indicator.
 
 import { v4 as uuid } from 'uuid';
 import { db } from './schema';
@@ -31,7 +31,6 @@ async function backfillActiveSessionRecord(): Promise<void> {
   await db.session_records.add({
     id: uuid(),
     festival_id: singleton.festival_id,
-    default_payment_type_id: singleton.default_payment_type_id,
     started_at: singleton.started_at,
     ended_at: null,
     created_at: now,
@@ -44,32 +43,13 @@ export async function seedIfNeeded(): Promise<void> {
   const prefs = await db.prefs.get('prefs');
   if (prefs?.schema_seeded) return;
 
-  const now = Date.now();
   await db.transaction(
     'rw',
-    [db.payment_types, db.session, db.sync_meta, db.prefs],
+    [db.session, db.sync_meta, db.prefs],
     async () => {
-      const seedPayments = [
-        { name: 'Cash', sort_order: 0 },
-        { name: 'Card', sort_order: 1 },
-        { name: 'Venmo', sort_order: 2 },
-        { name: 'Other', sort_order: 3 },
-      ];
-      await db.payment_types.bulkAdd(
-        seedPayments.map((p) => ({
-          id: uuid(),
-          name: p.name,
-          sort_order: p.sort_order,
-          archived: false,
-          created_at: now,
-          updated_at: now,
-        }))
-      );
-
       await db.session.put({
         id: 'session',
         festival_id: null,
-        default_payment_type_id: null,
         started_at: null,
       });
 

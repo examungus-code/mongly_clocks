@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type ID } from '../../db/schema';
-import { fmtCurrency, fmtDateTime } from '../../utils/format';
+import { fmtDateTime } from '../../utils/format';
 import { downloadCsv, toCsv } from '../../utils/csv-export';
 
 export function History() {
@@ -11,25 +11,20 @@ export function History() {
   const lineItems = useLiveQuery(() => db.line_items.toArray());
   const products = useLiveQuery(() => db.products.toArray());
   const festivals = useLiveQuery(() => db.festivals.toArray());
-  const paymentTypes = useLiveQuery(() => db.payment_types.toArray());
 
   const [festivalFilter, setFestivalFilter] = useState<string>('');
-  const [paymentFilter, setPaymentFilter] = useState<string>('');
   const [expanded, setExpanded] = useState<ID | null>(null);
 
   const productName = (id: ID) => products?.find((p) => p.id === id)?.name ?? id;
   const festivalName = (id: ID | null) =>
     id ? festivals?.find((f) => f.id === id)?.name ?? '—' : '—';
-  const paymentName = (id: ID) =>
-    paymentTypes?.find((p) => p.id === id)?.name ?? '—';
 
   const filtered = useMemo(() => {
     return (transactions ?? []).filter((t) => {
       if (festivalFilter && t.festival_id !== festivalFilter) return false;
-      if (paymentFilter && t.payment_type_id !== paymentFilter) return false;
       return true;
     });
-  }, [transactions, festivalFilter, paymentFilter]);
+  }, [transactions, festivalFilter]);
 
   const linesByTx = useMemo(() => {
     const map = new Map<ID, typeof lineItems>();
@@ -49,13 +44,9 @@ export function History() {
           transaction_id: tx.id,
           occurred_at: new Date(tx.occurred_at).toISOString(),
           festival: festivalName(tx.festival_id),
-          payment_type: paymentName(tx.payment_type_id),
           product: productName(line.product_id),
           subtype: line.subtype ?? '',
           quantity: line.quantity,
-          unit_price: line.unit_price.toFixed(2),
-          line_total: line.line_total.toFixed(2),
-          transaction_total: tx.total.toFixed(2),
           note: tx.note,
         });
       }
@@ -64,21 +55,22 @@ export function History() {
       'transaction_id',
       'occurred_at',
       'festival',
-      'payment_type',
       'product',
       'subtype',
       'quantity',
-      'unit_price',
-      'line_total',
-      'transaction_total',
       'note',
     ]);
     const stamp = new Date().toISOString().slice(0, 10);
     downloadCsv(`clockwork-history-${stamp}.csv`, csv);
   }
 
-  const totalRevenue = filtered.reduce((s, t) => s + t.total, 0);
   const totalCount = filtered.length;
+  const totalItems = filtered.reduce(
+    (s, tx) =>
+      s +
+      (linesByTx.get(tx.id) ?? []).reduce((acc, l) => acc + l.quantity, 0),
+    0
+  );
 
   return (
     <div className="space-y-4">
@@ -89,7 +81,7 @@ export function History() {
         </button>
       </div>
 
-      <div className="card p-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="card p-3 grid grid-cols-2 gap-3">
         <div>
           <label className="label">Festival</label>
           <select
@@ -105,25 +97,12 @@ export function History() {
             ))}
           </select>
         </div>
-        <div>
-          <label className="label">Payment</label>
-          <select
-            className="input"
-            value={paymentFilter}
-            onChange={(e) => setPaymentFilter(e.target.value)}
-          >
-            <option value="">All</option>
-            {paymentTypes?.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="col-span-2 sm:col-span-2 self-end text-right text-sm">
-          <span className="text-walnut/60">{totalCount} transactions · </span>
+        <div className="self-end text-right text-sm">
+          <span className="text-walnut/60">
+            {totalCount} sale{totalCount === 1 ? '' : 's'} ·{' '}
+          </span>
           <strong className="font-display text-base">
-            {fmtCurrency(totalRevenue)}
+            {totalItems} item{totalItems === 1 ? '' : 's'}
           </strong>
         </div>
       </div>
@@ -132,45 +111,43 @@ export function History() {
         <p className="text-walnut/60 text-center py-8">No transactions match.</p>
       ) : (
         <ul className="space-y-2">
-          {filtered.map((tx) => (
-            <li key={tx.id} className="card">
-              <button
-                className="w-full text-left p-3 grid grid-cols-[1fr_auto_auto] sm:grid-cols-[1fr_120px_100px_100px] gap-3 items-center hover:bg-parchment-dark/40"
-                onClick={() => setExpanded(expanded === tx.id ? null : tx.id)}
-              >
-                <span className="text-sm">{fmtDateTime(tx.occurred_at)}</span>
-                <span className="text-sm text-walnut/70 truncate hidden sm:inline">
-                  {festivalName(tx.festival_id)}
-                </span>
-                <span className="text-sm text-walnut/70">
-                  {paymentName(tx.payment_type_id)}
-                </span>
-                <span className="font-display text-right">
-                  {fmtCurrency(tx.total)}
-                </span>
-              </button>
-              {expanded === tx.id && (
-                <div className="border-t border-brass/30 p-3 text-sm space-y-1">
-                  {(linesByTx.get(tx.id) ?? []).map((l) => (
-                    <div key={l.id} className="flex justify-between">
-                      <span>
+          {filtered.map((tx) => {
+            const lines = linesByTx.get(tx.id) ?? [];
+            const qty = lines.reduce((s, l) => s + l.quantity, 0);
+            return (
+              <li key={tx.id} className="card">
+                <button
+                  className="w-full text-left p-3 grid grid-cols-[1fr_auto_auto] gap-3 items-center hover:bg-parchment-dark/40"
+                  onClick={() => setExpanded(expanded === tx.id ? null : tx.id)}
+                >
+                  <span className="text-sm">{fmtDateTime(tx.occurred_at)}</span>
+                  <span className="text-sm text-walnut/70 truncate hidden sm:inline">
+                    {festivalName(tx.festival_id)}
+                  </span>
+                  <span className="font-display text-right">
+                    {qty} item{qty === 1 ? '' : 's'}
+                  </span>
+                </button>
+                {expanded === tx.id && (
+                  <div className="border-t border-brass/30 p-3 text-sm space-y-1">
+                    {lines.map((l) => (
+                      <div key={l.id}>
                         {l.quantity} × {productName(l.product_id)}
                         {l.subtype && (
                           <span className="text-walnut/60"> · {l.subtype}</span>
                         )}
-                      </span>
-                      <span>{fmtCurrency(l.line_total)}</span>
-                    </div>
-                  ))}
-                  {tx.note && (
-                    <div className="text-walnut/60 italic pt-1">
-                      “{tx.note}”
-                    </div>
-                  )}
-                </div>
-              )}
-            </li>
-          ))}
+                      </div>
+                    ))}
+                    {tx.note && (
+                      <div className="text-walnut/60 italic pt-1">
+                        “{tx.note}”
+                      </div>
+                    )}
+                  </div>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

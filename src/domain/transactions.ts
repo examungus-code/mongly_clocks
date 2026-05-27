@@ -1,10 +1,11 @@
-// Cart and transaction completion.
+// Transaction completion.
 //
-// The cart lives in React state (see useCart hook) — it isn't persisted to the
-// DB until "Complete Transaction" runs. Completing a transaction writes:
-//   - one Transaction row
-//   - one TransactionLineItem per cart line
-//   - one InventoryAdjustment (reason: 'sold') per cart line
+// This app is strictly an inventory tracker — there is no currency, no
+// payment denomination, no totals. Completing a transaction writes:
+//   - one Transaction row (timestamp + festival + optional note)
+//   - one TransactionLineItem per line (just qty + subtype)
+//   - one InventoryAdjustment (reason: 'sold') per line, plus a
+//     'sold_component' for any subtype-linked component product
 // all atomically. If any step fails, nothing persists.
 
 import { v4 as uuid } from 'uuid';
@@ -15,18 +16,16 @@ import {
   type TransactionLineItem,
 } from '../db/schema';
 
-export interface CartLine {
+export interface SaleLine {
   product_id: ID;
-  product_name: string; // snapshot for cart display
+  product_name: string; // snapshot for display
   quantity: number;
-  unit_price: number;
   subtype: string | null; // null when the product has no subtypes defined
 }
 
 export interface CompleteTransactionInput {
-  lines: CartLine[];
+  lines: SaleLine[];
   festival_id: ID | null;
-  payment_type_id: ID;
   note?: string;
   occurred_at?: number;
 }
@@ -91,16 +90,10 @@ export async function completeTransaction(
 
   const now = input.occurred_at ?? Date.now();
   const txId = uuid();
-  const total = input.lines.reduce(
-    (sum, line) => sum + line.unit_price * line.quantity,
-    0
-  );
 
   const tx: Transaction = {
     id: txId,
     festival_id: input.festival_id,
-    payment_type_id: input.payment_type_id,
-    total,
     note: input.note ?? '',
     occurred_at: now,
     created_at: Date.now(),
@@ -111,8 +104,6 @@ export async function completeTransaction(
     transaction_id: txId,
     product_id: line.product_id,
     quantity: line.quantity,
-    unit_price: line.unit_price,
-    line_total: line.unit_price * line.quantity,
     subtype: line.subtype,
   }));
 

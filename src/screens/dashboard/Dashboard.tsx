@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../../db/schema';
-import { fmtCurrency, fmtRelative } from '../../utils/format';
+import { fmtRelative } from '../../utils/format';
 
 const TILES = [
   { to: '/sell', label: 'Sell', desc: 'Record sales at the booth', icon: '🔑' },
@@ -9,7 +9,7 @@ const TILES = [
   { to: '/history', label: 'History', desc: 'Past transactions & export', icon: '🕰' },
   { to: '/inventory', label: 'Inventory', desc: 'Adjustments log', icon: '⚖' },
   { to: '/sync', label: 'Sync', desc: 'Push & pull from Drive', icon: '↻' },
-  { to: '/settings', label: 'Settings', desc: 'Festivals, payment types', icon: '✦' },
+  { to: '/settings', label: 'Settings', desc: 'Festivals & device', icon: '✦' },
 ];
 
 export function Dashboard() {
@@ -20,13 +20,12 @@ export function Dashboard() {
   );
   const syncMeta = useLiveQuery(() => db.sync_meta.get('sync'));
 
-  // Today's sales totals (since session start, or midnight if no session)
+  // Today's totals (since session start, or midnight if no session)
   const since = session?.started_at ?? startOfToday();
   const todaysTx = useLiveQuery(
     () => db.transactions.where('occurred_at').above(since).toArray(),
     [since]
   );
-  const revenue = (todaysTx ?? []).reduce((sum, t) => sum + t.total, 0);
   const itemCount = useLiveQuery(async () => {
     if (!todaysTx) return 0;
     const ids = todaysTx.map((t) => t.id);
@@ -53,15 +52,19 @@ export function Dashboard() {
             </div>
             <div className="flex gap-6 text-right">
               <div>
-                <div className="text-xs uppercase text-brass-dark font-ui">Today</div>
+                <div className="text-xs uppercase text-brass-dark font-ui">
+                  Items today
+                </div>
                 <div className="text-3xl font-display text-walnut-dark">
-                  {fmtCurrency(revenue)}
+                  {itemCount ?? 0}
                 </div>
               </div>
               <div>
-                <div className="text-xs uppercase text-brass-dark font-ui">Items</div>
+                <div className="text-xs uppercase text-brass-dark font-ui">
+                  Sales today
+                </div>
                 <div className="text-3xl font-display text-walnut-dark">
-                  {itemCount ?? 0}
+                  {todaysTx?.length ?? 0}
                 </div>
               </div>
             </div>

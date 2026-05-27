@@ -27,7 +27,6 @@ export interface Product {
   category_id: ID;
   name: string;
   description: string;
-  list_price: number; // dollars, 2dp; store as number, format on render
   quantity_on_hand: number; // cache: sum of adjustments
   photo_id: ID | null;
   sort_order: number;
@@ -78,8 +77,6 @@ export interface InventoryAdjustment {
 export interface Transaction {
   id: ID;
   festival_id: ID | null;
-  payment_type_id: ID;
-  total: number; // cached sum of line items
   note: string;
   occurred_at: number;
   created_at: number;
@@ -90,8 +87,6 @@ export interface TransactionLineItem {
   transaction_id: ID;
   product_id: ID;
   quantity: number;
-  unit_price: number; // overrideable per-line
-  line_total: number; // cached: quantity * unit_price
   // Snapshot of the subtype selected at sale time. Stored as a string (not an
   // ID) so renaming a subtype later doesn't rewrite history.
   subtype: string | null;
@@ -101,15 +96,6 @@ export interface Festival {
   id: ID;
   name: string;
   archived: boolean;
-  created_at: number;
-  updated_at: number;
-}
-
-export interface PaymentType {
-  id: ID;
-  name: string;
-  archived: boolean;
-  sort_order: number;
   created_at: number;
   updated_at: number;
 }
@@ -126,7 +112,6 @@ export interface Photo {
 export interface Session {
   id: 'session';
   festival_id: ID | null;
-  default_payment_type_id: ID | null;
   started_at: number | null;
 }
 
@@ -138,7 +123,6 @@ export interface Session {
 export interface SessionRecord {
   id: ID;
   festival_id: ID | null;
-  default_payment_type_id: ID | null;
   started_at: number;
   ended_at: number | null; // null = still active
   created_at: number;
@@ -169,7 +153,6 @@ class ClockworkDB extends Dexie {
   transactions!: Table<Transaction, ID>;
   line_items!: Table<TransactionLineItem, ID>;
   festivals!: Table<Festival, ID>;
-  payment_types!: Table<PaymentType, ID>;
   photos!: Table<Photo, ID>;
   session!: Table<Session, 'session'>;
   session_records!: Table<SessionRecord, ID>;
@@ -197,6 +180,12 @@ class ClockworkDB extends Dexie {
     this.version(2).stores({
       session_records: 'id, started_at, ended_at, festival_id',
     });
+    // v3 schema: drop payment_types table; no longer used. The app is now
+    // strictly an inventory tracker — currency and payment denomination are
+    // out of scope. Existing rows are discarded on upgrade.
+    this.version(3).stores({
+      payment_types: null,
+    });
   }
 }
 
@@ -212,4 +201,10 @@ export const db = new ClockworkDB();
 //     component side-effects on sales.
 // v4: SessionRecord table (history of every session). Older clients would
 //     lose this history on round-trip; refuse pull.
-export const SCHEMA_VERSION = 4;
+// v5: Drop all currency/payment concerns. Product.list_price,
+//     TransactionLineItem.unit_price / line_total, Transaction.total /
+//     payment_type_id, the PaymentType table, and
+//     Session(Record).default_payment_type_id are all gone. Older clients
+//     reading v5 data have nowhere to source these from and would crash on
+//     fmtCurrency — refuse pull.
+export const SCHEMA_VERSION = 5;

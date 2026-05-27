@@ -4,7 +4,6 @@
 import { useEffect, useRef } from 'react';
 import { type Product } from '../../db/schema';
 import { PhotoImg } from '../../components/PhotoImg';
-import { fmtCurrency } from '../../utils/format';
 
 interface Props {
   product: Product;
@@ -37,7 +36,7 @@ export function SubtypePicker({ product, onPick, onCancel }: Props) {
           <div className="flex-1 min-w-0">
             <h3 className="font-display text-lg truncate">{product.name}</h3>
             <div className="text-sm text-walnut/70">
-              {fmtCurrency(product.list_price)} · pick a subtype to sell
+              Pick a subtype to sell
             </div>
           </div>
         </div>

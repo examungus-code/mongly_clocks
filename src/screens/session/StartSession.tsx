@@ -9,19 +9,10 @@ export function StartSession() {
   const festivals = useLiveQuery(
     () => db.festivals.filter((f) => !f.archived).toArray()
   );
-  const paymentTypes = useLiveQuery(
-    () => db.payment_types.filter((p) => !p.archived).sortBy('sort_order')
-  );
 
   const [festivalId, setFestivalId] = useState<string>('');
   const [newFestival, setNewFestival] = useState('');
-  const [paymentTypeId, setPaymentTypeId] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
-
-  // Default payment type to first available
-  if (!paymentTypeId && paymentTypes?.length) {
-    setPaymentTypeId(paymentTypes[0].id);
-  }
 
   async function handleStart() {
     setSubmitting(true);
@@ -42,7 +33,6 @@ export function StartSession() {
     await db.session.put({
       id: 'session',
       festival_id: chosenFestival || null,
-      default_payment_type_id: paymentTypeId,
       started_at: startedAt,
     });
     // History: append a SessionRecord so the catalogue's session selector
@@ -50,7 +40,6 @@ export function StartSession() {
     await db.session_records.add({
       id: uuid(),
       festival_id: chosenFestival || null,
-      default_payment_type_id: paymentTypeId,
       started_at: startedAt,
       ended_at: null,
       created_at: startedAt,
@@ -63,7 +52,8 @@ export function StartSession() {
     <div className="max-w-md mx-auto space-y-5">
       <h1 className="text-3xl">Start a session</h1>
       <p className="text-sm text-walnut/70">
-        Pick the festival and default payment type. Both can be changed later.
+        Pick the festival. This tags every sale you make until you end the
+        session.
       </p>
 
       <div>
@@ -91,28 +81,12 @@ export function StartSession() {
         )}
       </div>
 
-      <div>
-        <label className="label">Default payment type</label>
-        <select
-          className="input"
-          value={paymentTypeId}
-          onChange={(e) => setPaymentTypeId(e.target.value)}
-        >
-          {paymentTypes?.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-      </div>
-
       <div className="flex gap-2">
         <button
           className="btn-primary flex-1"
           onClick={handleStart}
           disabled={
             submitting ||
-            !paymentTypeId ||
             (festivalId === '__new' && !newFestival.trim())
           }
         >

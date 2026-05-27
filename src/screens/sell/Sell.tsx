@@ -1,26 +1,24 @@
 // Sell screen — booth optimized for speed.
 //
-// Tap = sale. One tap on a product tile creates a single-line transaction with
-// quantity 1 at list price, paid via the session's default payment type. The
-// only exception is products that have subtypes but no default subtype set —
-// those open a one-tap subtype picker, then sell.
+// Tap = sale. One tap on a product tile records a single-line transaction
+// of quantity 1. The only exception is products that have subtypes but no
+// default subtype set — those open a one-tap subtype picker, then sell.
 //
-// No cart, no search bar, no quantity stepper, no price override at sale time.
-// Mistakes are corrected via the Recent screen (delete the transaction) or
-// via the catalogue editor for inventory adjustments.
+// No cart, no search bar, no quantity stepper. This is strictly an inventory
+// tracker; there is no currency or payment. Mistakes are corrected via the
+// Recent screen (delete the transaction) or via the catalogue editor for
+// inventory adjustments.
 
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Category, type ID, type Product } from '../../db/schema';
 import { PhotoImg } from '../../components/PhotoImg';
-import { fmtCurrency } from '../../utils/format';
 import { completeTransaction } from '../../domain/transactions';
 import { SubtypePicker } from './SubtypePicker';
 
 interface Toast {
   product_name: string;
-  amount: number;
   expiresAt: number;
 }
 
@@ -42,7 +40,7 @@ export function Sell() {
   );
   const [toast, setToast] = useState<Toast | null>(null);
 
-  // ---- Hierarchical lookups (same as before) ----
+  // ---- Hierarchical lookups ----
   const { childrenByParent, productsByCategory, ancestors } =
     useMemo(() => {
       const childrenByParent = new Map<ID | null, Category[]>();
@@ -89,20 +87,26 @@ export function Sell() {
     return total;
   }
 
-  // Today's totals
+  // Today's totals — item count + transaction count, no currency.
   const since = session?.started_at ?? 0;
   const todaysTx = useLiveQuery(
     () => db.transactions.where('occurred_at').above(since).toArray(),
     [since]
   );
-  const todayRevenue = (todaysTx ?? []).reduce((s, t) => s + t.total, 0);
+  const todaysItemCount = useLiveQuery(async () => {
+    if (!todaysTx) return 0;
+    const ids = todaysTx.map((t) => t.id);
+    if (ids.length === 0) return 0;
+    const lines = await db.line_items.where('transaction_id').anyOf(ids).toArray();
+    return lines.reduce((s, l) => s + l.quantity, 0);
+  }, [todaysTx]);
 
   if (!session?.started_at) {
     return (
       <div className="text-center py-12 space-y-4">
         <h2 className="text-2xl">No active session</h2>
         <p className="text-walnut/70">
-          Start a session to pick a festival and default payment type.
+          Start a session to pick a festival.
         </p>
         <Link to="/session/start" className="btn-primary">
           Start session
@@ -112,24 +116,18 @@ export function Sell() {
   }
 
   async function sellNow(product: Product, subtype: string | null) {
-    if (!session?.default_payment_type_id) {
-      alert('No payment type set on session');
-      return;
-    }
     await completeTransaction({
       lines: [
         {
           product_id: product.id,
           product_name: product.name,
           quantity: 1,
-          unit_price: product.list_price,
           subtype,
         },
       ],
-      festival_id: session.festival_id,
-      payment_type_id: session.default_payment_type_id,
+      festival_id: session?.festival_id ?? null,
     });
-    showToast(product.name + (subtype ? ` · ${subtype}` : ''), product.list_price);
+    showToast(product.name + (subtype ? ` · ${subtype}` : ''));
   }
 
   function handleTileTap(product: Product) {
@@ -144,9 +142,9 @@ export function Sell() {
     void sellNow(product, hasSubtypes ? def : null);
   }
 
-  function showToast(name: string, amount: number) {
+  function showToast(name: string) {
     const expiresAt = Date.now() + 2500;
-    setToast({ product_name: name, amount, expiresAt });
+    setToast({ product_name: name, expiresAt });
     setTimeout(() => {
       setToast((cur) => (cur && cur.expiresAt === expiresAt ? null : cur));
     }, 2500);
@@ -169,7 +167,8 @@ export function Sell() {
         <div className="text-right">
           <div className="text-xs uppercase text-brass-dark font-ui">Today</div>
           <div className="font-display text-lg leading-tight">
-            {fmtCurrency(todayRevenue)}
+            {todaysItemCount ?? 0} item
+            {todaysItemCount === 1 ? '' : 's'}
           </div>
         </div>
         <Link to="/sell/recent" className="btn-ghost text-sm">
@@ -180,9 +179,6 @@ export function Sell() {
           onClick={async () => {
             if (!confirm('End session?')) return;
             const now = Date.now();
-            // Close the matching SessionRecord (the one currently active).
-            // Match by started_at since that's the singleton's only handle
-            // back to the record.
             const startedAt = session?.started_at ?? null;
             if (startedAt) {
               const active = await db.session_records
@@ -279,9 +275,8 @@ export function Sell() {
                 <div className="mt-2 text-sm font-ui font-medium truncate">
                   {p.name}
                 </div>
-                <div className="flex justify-between text-xs text-walnut/60">
-                  <span>{fmtCurrency(p.list_price)}</span>
-                  <span>qty {p.quantity_on_hand}</span>
+                <div className="text-xs text-walnut/60 text-right">
+                  qty {p.quantity_on_hand}
                 </div>
                 {(p.subtypes ?? []).length > 0 && (
                   <div className="text-[10px] text-walnut/50 truncate mt-0.5">
@@ -314,7 +309,7 @@ export function Sell() {
           aria-live="polite"
           className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-walnut text-parchment-light px-4 py-2 rounded-lg shadow-lg z-20 text-sm font-ui"
         >
-          ✓ Sold: {toast.product_name} · {fmtCurrency(toast.amount)}
+          ✓ Sold: {toast.product_name}
         </div>
       )}
     </div>

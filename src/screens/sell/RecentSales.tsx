@@ -8,7 +8,7 @@ import { Link } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type ID } from '../../db/schema';
 import { deleteTransaction } from '../../domain/transactions';
-import { fmtCurrency, fmtDateTime } from '../../utils/format';
+import { fmtDateTime } from '../../utils/format';
 import { Confirm } from '../../components/Confirm';
 
 export function RecentSales() {
@@ -62,28 +62,24 @@ export function RecentSales() {
         <ul className="space-y-2">
           {transactions.map((tx) => {
             const lines = linesFor(tx.id);
+            const totalQty = lines.reduce((s, l) => s + l.quantity, 0);
             return (
               <li key={tx.id} className="card p-3">
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-xs text-walnut/70">
                     {fmtDateTime(tx.occurred_at)}
                   </div>
-                  <div className="font-display text-lg">
-                    {fmtCurrency(tx.total)}
+                  <div className="text-sm text-walnut/60">
+                    {totalQty} item{totalQty === 1 ? '' : 's'}
                   </div>
                 </div>
                 <ul className="text-sm mt-1 space-y-0.5">
                   {lines.map((l) => (
-                    <li key={l.id} className="flex justify-between">
-                      <span>
-                        {l.quantity} × {productName(l.product_id)}
-                        {l.subtype && (
-                          <span className="text-walnut/60"> · {l.subtype}</span>
-                        )}
-                      </span>
-                      <span className="text-walnut/60">
-                        {fmtCurrency(l.line_total)}
-                      </span>
+                    <li key={l.id}>
+                      {l.quantity} × {productName(l.product_id)}
+                      {l.subtype && (
+                        <span className="text-walnut/60"> · {l.subtype}</span>
+                      )}
                     </li>
                   ))}
                 </ul>

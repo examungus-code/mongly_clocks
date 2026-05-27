@@ -7,7 +7,6 @@ import { db, type Product, type ID } from '../../db/schema';
 import { createProduct, updateProduct } from '../../domain/catalogue';
 import { recordAdjustment } from '../../domain/inventory';
 import { PhotoImg } from '../../components/PhotoImg';
-import { fmtCurrency } from '../../utils/format';
 
 type Props =
   | {
@@ -30,9 +29,6 @@ export function ProductEditor(props: Props) {
 
   const [name, setName] = useState(existing?.name ?? '');
   const [description, setDescription] = useState(existing?.description ?? '');
-  const [price, setPrice] = useState(
-    existing ? existing.list_price.toFixed(2) : ''
-  );
   const [initialQty, setInitialQty] = useState('0');
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoCleared, setPhotoCleared] = useState(false);
@@ -102,8 +98,7 @@ export function ProductEditor(props: Props) {
   }
 
   async function handleSave() {
-    const priceNum = parseFloat(price);
-    if (!name.trim() || isNaN(priceNum) || priceNum < 0) return;
+    if (!name.trim()) return;
     setSaving(true);
     try {
       if (props.mode === 'create') {
@@ -112,7 +107,6 @@ export function ProductEditor(props: Props) {
           category_id: props.category_id,
           name,
           description,
-          list_price: priceNum,
           initial_quantity: qty,
           photo_file: photoFile,
           subtypes: cleanSubtypes,
@@ -123,7 +117,6 @@ export function ProductEditor(props: Props) {
         await updateProduct(props.product.id, {
           name,
           description,
-          list_price: priceNum,
           photo_file: photoCleared ? null : (photoFile ?? undefined),
           subtypes: cleanSubtypes,
           default_subtype: effectiveDefault,
@@ -214,33 +207,19 @@ export function ProductEditor(props: Props) {
                 onChange={(e) => setDescription(e.target.value)}
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            {!isEdit && (
               <div>
-                <label className="label">Price (USD)</label>
+                <label className="label">Initial quantity</label>
                 <input
-                  className="input"
+                  className="input max-w-[160px]"
                   type="number"
-                  step="0.01"
                   min="0"
-                  value={price}
-                  onChange={(e) => setPrice(e.target.value)}
-                  required
+                  step="1"
+                  value={initialQty}
+                  onChange={(e) => setInitialQty(e.target.value)}
                 />
               </div>
-              {!isEdit && (
-                <div>
-                  <label className="label">Initial quantity</label>
-                  <input
-                    className="input"
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={initialQty}
-                    onChange={(e) => setInitialQty(e.target.value)}
-                  />
-                </div>
-              )}
-            </div>
+            )}
           </div>
         </div>
 
@@ -468,9 +447,6 @@ export function ProductEditor(props: Props) {
           </div>
         </footer>
       </form>
-      <div className="text-xs text-walnut/50 px-5 pb-2">
-        {isEdit && existing && `List: ${fmtCurrency(existing.list_price)}`}
-      </div>
     </dialog>
   );
 }

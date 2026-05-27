@@ -36,7 +36,6 @@ import {
 } from '../../domain/catalogue';
 import { PhotoImg } from '../../components/PhotoImg';
 import { Confirm } from '../../components/Confirm';
-import { fmtCurrency } from '../../utils/format';
 import { ProductEditor } from './ProductEditor';
 
 export function Catalogue() {
@@ -561,10 +560,8 @@ function ProductCard({
           {product.name}
         </div>
         <div className="flex justify-between text-xs text-walnut/60">
-          <span>{fmtCurrency(product.list_price)}</span>
-          <span>
-            sold {sold} · qty {product.quantity_on_hand}
-          </span>
+          <span>sold {sold}</span>
+          <span>qty {product.quantity_on_hand}</span>
         </div>
       </div>
     </div>
