@@ -8,7 +8,7 @@
 //   - drag a product card above/below another to reorder within the category
 // Cycles are blocked at the domain layer (moveCategory throws).
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   DndContext,
@@ -354,10 +354,46 @@ function CategoryMenu({
   onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // Close on any pointer activity outside the menu's own subtree. mousedown +
+  // touchstart cover desktop and touch; we listen on capture so we can react
+  // before child click handlers, and Escape closes from keyboards.
+  useEffect(() => {
+    if (!open) return;
+    function handleOutside(e: Event) {
+      if (
+        rootRef.current &&
+        !rootRef.current.contains(e.target as Node)
+      ) {
+        setOpen(false);
+      }
+    }
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('mousedown', handleOutside, true);
+    document.addEventListener('touchstart', handleOutside, true);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside, true);
+      document.removeEventListener('touchstart', handleOutside, true);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [open]);
+
   return (
-    <div className="relative" onClick={(e) => e.stopPropagation()}>
+    <div
+      ref={rootRef}
+      className="relative"
+      onClick={(e) => e.stopPropagation()}
+    >
       <button
-        className="opacity-0 group-hover:opacity-100 px-1 text-walnut/60"
+        // Keep the trigger visible whenever the menu is open so it doesn't
+        // disappear out from under the user's finger on touch devices.
+        className={`px-1 text-walnut/60 ${
+          open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+        }`}
         onClick={() => setOpen((v) => !v)}
         title="Actions"
         onPointerDown={(e) => e.stopPropagation()}
@@ -365,10 +401,7 @@ function CategoryMenu({
         ⋯
       </button>
       {open && (
-        <div
-          className="absolute right-0 top-full z-10 bg-parchment-light border border-brass/40 rounded shadow-md min-w-[140px] text-sm"
-          onMouseLeave={() => setOpen(false)}
-        >
+        <div className="absolute right-0 top-full z-10 bg-parchment-light border border-brass/40 rounded shadow-md min-w-[140px] text-sm">
           <button
             className="block w-full text-left px-3 py-1.5 hover:bg-parchment-dark"
             onClick={() => {
