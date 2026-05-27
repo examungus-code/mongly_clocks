@@ -19,9 +19,12 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="h-full flex flex-col">
       <header className="border-b-2 border-brass bg-white text-walnut px-4 py-3">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <NavLink to="/" className="font-display text-2xl tracking-tight font-semibold">
-            <span className="text-walnut">Clockwork </span>
-            <span className="text-brass-dark">Traveler</span>
+          <NavLink to="/" className="flex items-center" aria-label="Clockwork Traveler — home">
+            <img
+              src="/mongly_clocks/logo.webp"
+              alt="Clockwork Traveler"
+              className="h-8 sm:h-10 w-auto"
+            />
           </NavLink>
           <span className="text-xs text-walnut/50 font-ui hidden sm:inline">
             offline-first inventory
