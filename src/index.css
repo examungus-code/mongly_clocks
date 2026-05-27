@@ -11,7 +11,7 @@
     @apply h-full;
   }
   body {
-    @apply font-body text-walnut bg-white antialiased;
+    @apply font-body text-walnut bg-brass-tint antialiased;
   }
   h1, h2, h3, h4 {
     @apply font-display text-walnut font-semibold tracking-tight;
@@ -39,7 +39,7 @@
     @apply btn text-walnut hover:bg-parchment-dark;
   }
   .card {
-    @apply bg-white border border-walnut/10 rounded-lg shadow-sm;
+    @apply bg-white border border-brass/40 rounded-lg shadow-sm;
   }
   .input {
     @apply w-full px-3 py-2 rounded-md bg-white border border-walnut/15
@@ -50,7 +50,7 @@
     @apply block text-sm font-ui font-medium text-walnut mb-1;
   }
   .tile {
-    @apply card overflow-hidden cursor-pointer hover:border-brass/60 hover:shadow-brass transition-all;
+    @apply card overflow-hidden cursor-pointer hover:border-brass hover:bg-brass-soft hover:shadow-brass transition-all;
   }
 }
 

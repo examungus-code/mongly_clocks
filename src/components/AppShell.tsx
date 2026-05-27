@@ -17,7 +17,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="h-full flex flex-col">
-      <header className="border-b border-walnut/10 bg-white text-walnut px-4 py-3">
+      <header className="border-b-2 border-brass bg-white text-walnut px-4 py-3">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <NavLink to="/" className="font-display text-2xl tracking-tight font-semibold">
             <span className="text-walnut">Clockwork </span>
@@ -33,7 +33,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <div className="max-w-6xl mx-auto p-4 sm:p-6">{children}</div>
       </main>
 
-      <nav className="border-t border-walnut/10 bg-white text-walnut">
+      <nav className="border-t-2 border-brass bg-white text-walnut">
         <div className="max-w-6xl mx-auto grid grid-cols-7">
           {NAV.map((item) => (
             <NavLink
@@ -43,8 +43,8 @@ export function AppShell({ children }: { children: ReactNode }) {
               className={({ isActive }) =>
                 `flex flex-col items-center py-2 text-xs font-ui transition-colors ${
                   isActive
-                    ? 'text-walnut border-t-2 border-brass -mt-px'
-                    : 'text-walnut/60 hover:text-walnut'
+                    ? 'text-walnut bg-brass-soft'
+                    : 'text-walnut/60 hover:text-walnut hover:bg-brass-tint'
                 }`
               }
             >

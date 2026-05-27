@@ -17,6 +17,10 @@ export default {
           DEFAULT: '#FFC700',
           light: '#FFE066',
           dark: '#E8B500',
+          // Barely-there warm wash used as a tinted surface on cards and the
+          // body background. Adds presence without sacrificing legibility.
+          soft: '#FFF8E0',
+          tint: '#FFFBEC',
         },
         walnut: {
           DEFAULT: '#000000',
