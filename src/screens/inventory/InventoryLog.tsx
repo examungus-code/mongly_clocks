@@ -13,6 +13,7 @@ import {
   changeLineItemSubtype,
   deleteTransaction,
 } from '../../domain/transactions';
+import { resolveSubtypeConfig } from '../../domain/catalogue';
 import { useEffect, useRef } from 'react';
 
 const REASONS: { value: AdjustmentReason | ''; label: string }[] = [
@@ -165,11 +166,15 @@ export function InventoryLog() {
             const subtype = subtypeForAdj(a.id);
             const lineId = lineForAdjustment.get(a.id);
             const product = products?.find((p) => p.id === a.product_id);
+            const effectiveSubtypes =
+              product && categories
+                ? resolveSubtypeConfig(
+                    product,
+                    new Map(categories.map((c) => [c.id, c]))
+                  ).subtypes
+                : [];
             const canChangeSubtype =
-              isSold(a) &&
-              lineId &&
-              product &&
-              (product.subtypes ?? []).length > 0;
+              isSold(a) && lineId && effectiveSubtypes.length > 0;
             return (
               <li
                 key={a.id}
@@ -239,6 +244,7 @@ export function InventoryLog() {
           product_id={subtypeEdit.product_id}
           current={subtypeEdit.current}
           products={products ?? []}
+          categories={categories ?? []}
           onClose={() => setSubtypeEdit(null)}
         />
       )}
@@ -277,16 +283,39 @@ function SubtypeChangeDialog({
   product_id,
   current,
   products,
+  categories,
   onClose,
 }: {
   line_item_id: ID;
   product_id: ID;
   current: string | null;
-  products: { id: ID; subtypes?: string[]; name: string }[];
+  products: {
+    id: ID;
+    name: string;
+    category_id: ID;
+    subtypes?: string[];
+    default_subtype?: string | null;
+    subtype_links?: Record<string, ID>;
+  }[];
+  categories: { id: ID; parent_id: ID | null; subtypes?: string[]; default_subtype?: string | null; subtype_links?: Record<string, ID> }[];
   onClose: () => void;
 }) {
   const product = products.find((p) => p.id === product_id);
-  const subtypes = product?.subtypes ?? [];
+  // Resolve the effective subtype list — may come from this product or one of
+  // its category ancestors.
+  const subtypes = product
+    ? resolveSubtypeConfig(
+        product as Parameters<typeof resolveSubtypeConfig>[0],
+        new Map(
+          categories.map((c) => [
+            c.id,
+            c as Parameters<typeof resolveSubtypeConfig>[1] extends Map<ID, infer V>
+              ? V
+              : never,
+          ])
+        )
+      ).subtypes
+    : [];
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     ref.current?.showModal();

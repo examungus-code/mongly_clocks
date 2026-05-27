@@ -15,6 +15,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Category, type ID, type Product } from '../../db/schema';
 import { PhotoImg } from '../../components/PhotoImg';
 import { completeTransaction } from '../../domain/transactions';
+import { resolveSubtypeConfig } from '../../domain/catalogue';
 import { SubtypePicker } from './SubtypePicker';
 
 interface Toast {
@@ -41,7 +42,7 @@ export function Sell() {
   const [toast, setToast] = useState<Toast | null>(null);
 
   // ---- Hierarchical lookups ----
-  const { childrenByParent, productsByCategory, ancestors } =
+  const { childrenByParent, productsByCategory, ancestors, categoryById } =
     useMemo(() => {
       const childrenByParent = new Map<ID | null, Category[]>();
       const productsByCategory = new Map<ID, Product[]>();
@@ -76,7 +77,7 @@ export function Sell() {
         cursor = cursor.parent_id ? categoryById.get(cursor.parent_id) ?? null : null;
       }
 
-      return { childrenByParent, productsByCategory, ancestors };
+      return { childrenByParent, productsByCategory, ancestors, categoryById };
     }, [categories, products, cwd]);
 
   function recursiveProductCount(cat_id: ID): number {
@@ -131,15 +132,15 @@ export function Sell() {
   }
 
   function handleTileTap(product: Product) {
-    const subtypes = product.subtypes ?? [];
-    const hasSubtypes = subtypes.length > 0;
-    const def = product.default_subtype ?? null;
-    if (hasSubtypes && !def) {
-      // Operator must pick — open the picker, sale completes on selection.
+    // Effective subtype config = product's own if defined, else inherited from
+    // the closest category ancestor that defines subtypes.
+    const cfg = resolveSubtypeConfig(product, categoryById);
+    const hasSubtypes = cfg.subtypes.length > 0;
+    if (hasSubtypes && !cfg.default_subtype) {
       setPickingSubtypeFor(product);
       return;
     }
-    void sellNow(product, hasSubtypes ? def : null);
+    void sellNow(product, hasSubtypes ? cfg.default_subtype : null);
   }
 
   function showToast(name: string) {
@@ -278,13 +279,17 @@ export function Sell() {
                 <div className="text-xs text-walnut/60 text-right">
                   qty {p.quantity_on_hand}
                 </div>
-                {(p.subtypes ?? []).length > 0 && (
-                  <div className="text-[10px] text-walnut/50 truncate mt-0.5">
-                    {p.default_subtype
-                      ? `→ ${p.default_subtype}`
-                      : '↳ pick subtype'}
-                  </div>
-                )}
+                {(() => {
+                  const cfg = resolveSubtypeConfig(p, categoryById);
+                  if (cfg.subtypes.length === 0) return null;
+                  return (
+                    <div className="text-[10px] text-walnut/50 truncate mt-0.5">
+                      {cfg.default_subtype
+                        ? `→ ${cfg.default_subtype}`
+                        : '↳ pick subtype'}
+                    </div>
+                  );
+                })()}
               </button>
             ))}
           </div>
@@ -294,6 +299,7 @@ export function Sell() {
       {pickingSubtypeFor && (
         <SubtypePicker
           product={pickingSubtypeFor}
+          subtypes={resolveSubtypeConfig(pickingSubtypeFor, categoryById).subtypes}
           onCancel={() => setPickingSubtypeFor(null)}
           onPick={async (subtype) => {
             const p = pickingSubtypeFor;

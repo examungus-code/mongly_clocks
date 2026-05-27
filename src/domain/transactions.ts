@@ -15,6 +15,7 @@ import {
   type Transaction,
   type TransactionLineItem,
 } from '../db/schema';
+import { resolveSubtypeConfigAsync } from './catalogue';
 
 export interface SaleLine {
   product_id: ID;
@@ -138,8 +139,11 @@ export async function completeTransaction(
 
         // Subtype component link: decrement the linked product too. Hidden
         // from the inventory log but still counts toward the linked
-        // product's qty. Note carries provenance for debugging.
-        const links = product.subtype_links ?? {};
+        // product's qty. Note carries provenance for debugging. Links
+        // resolve through category inheritance: if the product has no
+        // subtype_links of its own, walk up to the closest category that
+        // defines them.
+        const { subtype_links: links } = await resolveSubtypeConfigAsync(product);
         const componentId =
           line.subtype && links[line.subtype] ? links[line.subtype] : null;
         if (componentId) {
@@ -195,7 +199,7 @@ export async function changeLineItemSubtype(
       const product = await db.products.get(line.product_id);
       if (!product) throw new Error('product not found');
 
-      const links = product.subtype_links ?? {};
+      const { subtype_links: links } = await resolveSubtypeConfigAsync(product);
       const oldSubtype = line.subtype;
       const oldComponentId =
         oldSubtype && links[oldSubtype] ? links[oldSubtype] : null;

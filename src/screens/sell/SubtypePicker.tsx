@@ -7,18 +7,18 @@ import { PhotoImg } from '../../components/PhotoImg';
 
 interface Props {
   product: Product;
+  /** Effective subtypes (may be inherited from the product's category). */
+  subtypes: string[];
   onPick: (subtype: string) => void;
   onCancel: () => void;
 }
 
-export function SubtypePicker({ product, onPick, onCancel }: Props) {
+export function SubtypePicker({ product, subtypes, onPick, onCancel }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     ref.current?.showModal();
     return () => ref.current?.close();
   }, []);
-
-  const subtypes = product.subtypes ?? [];
 
   return (
     <dialog

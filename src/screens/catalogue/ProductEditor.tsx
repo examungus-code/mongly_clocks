@@ -4,9 +4,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Product, type ID } from '../../db/schema';
-import { createProduct, updateProduct } from '../../domain/catalogue';
+import {
+  createProduct,
+  resolveSubtypeConfig,
+  updateProduct,
+} from '../../domain/catalogue';
 import { recordAdjustment } from '../../domain/inventory';
 import { PhotoImg } from '../../components/PhotoImg';
+import { SubtypeEditor } from './SubtypeEditor';
 
 type Props =
   | {
@@ -51,6 +56,29 @@ export function ProductEditor(props: Props) {
   const linkableProducts = (allProducts ?? []).filter(
     (p) => !p.archived && p.id !== existing?.id
   );
+
+  // Inheritance hint: if this product has no subtypes of its own, what would
+  // it inherit from its category tree? Used only for display — saving with
+  // an empty subtypes list keeps the inheritance active.
+  const allCategories = useLiveQuery(() => db.categories.toArray());
+  const probeCategoryId =
+    props.mode === 'create' ? props.category_id : existing?.category_id;
+  const inheritProbe =
+    probeCategoryId && allCategories
+      ? resolveSubtypeConfig(
+          {
+            category_id: probeCategoryId,
+            subtypes: [],
+            default_subtype: null,
+            subtype_links: {},
+          },
+          new Map(allCategories.map((c) => [c.id, c]))
+        )
+      : null;
+  const inheritedFromCategory =
+    inheritProbe?.inherited_from && allCategories
+      ? allCategories.find((c) => c.id === inheritProbe.inherited_from) ?? null
+      : null;
 
   const dialogRef = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -235,119 +263,42 @@ export function ProductEditor(props: Props) {
             </button>
           </div>
           {subtypes.length === 0 ? (
-            <p className="text-xs text-walnut/60">
-              Leave empty if this product has no variants. Add subtypes (e.g.
-              silver / gold / copper) to make the operator pick one at sale
-              time. Each subtype can optionally link to another product
-              (a “component”) that is auto-decremented from inventory when
-              this subtype is sold — useful for things like chains.
-            </p>
+            inheritedFromCategory && inheritProbe ? (
+              <div className="text-xs text-walnut/70 bg-brass-soft border border-brass/40 rounded-md px-3 py-2">
+                Inheriting from <strong>{inheritedFromCategory.name}</strong>:{' '}
+                {inheritProbe.subtypes.join(' / ')}
+                {inheritProbe.default_subtype
+                  ? ` (default ${inheritProbe.default_subtype})`
+                  : ' (no default — operator picks)'}
+                . Add subtypes here to override.
+              </div>
+            ) : (
+              <p className="text-xs text-walnut/60">
+                Leave empty if this product has no variants. Add subtypes (e.g.
+                silver / gold / copper) to make the operator pick one at sale
+                time. Each subtype can optionally link to another product
+                (a “component”) that is auto-decremented when this subtype is
+                sold. Tip: define these on the <em>category</em> instead to
+                share across all products inside.
+              </p>
+            )
           ) : (
             <>
               <p className="text-xs text-walnut/60">
                 Pick a default below, or leave “No default” to force the
-                operator to choose at sale time. The dropdown next to each
-                subtype optionally links a component product (e.g. gold
-                chain) that will be deducted from inventory automatically
+                operator to choose. The dropdown next to each subtype
+                optionally links a component product that gets auto-deducted
                 when that subtype sells.
               </p>
-              <ul className="space-y-2">
-                {subtypes.map((sub, i) => {
-                  const trimmed = sub.trim();
-                  const isDefault = !!trimmed && defaultSubtype === trimmed;
-                  const linkedId = trimmed ? subtypeLinks[trimmed] ?? '' : '';
-                  return (
-                    <li
-                      key={i}
-                      className="grid grid-cols-[auto_1fr_auto] sm:grid-cols-[auto_1fr_1fr_auto] gap-2 items-center"
-                    >
-                      <input
-                        type="radio"
-                        name="default-subtype"
-                        checked={isDefault}
-                        disabled={!trimmed}
-                        onChange={() => setDefaultSubtype(trimmed)}
-                        title="Default at sale time"
-                      />
-                      <input
-                        className="input !min-h-0 !py-1.5"
-                        placeholder="Subtype name"
-                        value={sub}
-                        onChange={(e) => {
-                          const oldKey = sub.trim();
-                          const newKey = e.target.value.trim();
-                          const next = [...subtypes];
-                          next[i] = e.target.value;
-                          if (defaultSubtype === oldKey) {
-                            setDefaultSubtype(newKey);
-                          }
-                          // Carry the existing link to the renamed key.
-                          if (oldKey !== newKey && subtypeLinks[oldKey]) {
-                            const updated = { ...subtypeLinks };
-                            updated[newKey] = updated[oldKey];
-                            delete updated[oldKey];
-                            setSubtypeLinks(updated);
-                          }
-                          setSubtypes(next);
-                        }}
-                      />
-                      <select
-                        className="input !min-h-0 !py-1.5 col-span-2 sm:col-span-1"
-                        value={linkedId}
-                        disabled={!trimmed}
-                        onChange={(e) => {
-                          if (!trimmed) return;
-                          const updated = { ...subtypeLinks };
-                          if (e.target.value) {
-                            updated[trimmed] = e.target.value;
-                          } else {
-                            delete updated[trimmed];
-                          }
-                          setSubtypeLinks(updated);
-                        }}
-                        title="Linked component product (decremented from inventory when this subtype is sold)"
-                      >
-                        <option value="">
-                          {trimmed ? '— no linked component —' : '(name first)'}
-                        </option>
-                        {linkableProducts.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            ↳ {p.name}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        className="text-copper text-sm px-1 col-start-3 sm:col-start-4"
-                        onClick={() => {
-                          const next = subtypes.filter((_, j) => j !== i);
-                          setSubtypes(next);
-                          if (defaultSubtype === sub.trim()) {
-                            setDefaultSubtype(null);
-                          }
-                          if (sub.trim() && subtypeLinks[sub.trim()]) {
-                            const updated = { ...subtypeLinks };
-                            delete updated[sub.trim()];
-                            setSubtypeLinks(updated);
-                          }
-                        }}
-                        title="Remove"
-                      >
-                        ✕
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="radio"
-                  name="default-subtype"
-                  checked={defaultSubtype === null}
-                  onChange={() => setDefaultSubtype(null)}
-                />
-                <span>No default (operator must pick)</span>
-              </label>
+              <SubtypeEditor
+                subtypes={subtypes}
+                defaultSubtype={defaultSubtype}
+                subtypeLinks={subtypeLinks}
+                linkableProducts={linkableProducts}
+                onSubtypesChange={setSubtypes}
+                onDefaultChange={setDefaultSubtype}
+                onLinksChange={setSubtypeLinks}
+              />
             </>
           )}
         </div>

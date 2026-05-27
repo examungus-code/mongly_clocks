@@ -71,10 +71,35 @@ export async function createCategory(
     name: name.trim(),
     parent_id,
     sort_order: maxOrder + 1,
+    subtypes: [],
+    default_subtype: null,
+    subtype_links: {},
     created_at: now,
     updated_at: now,
   });
   return id;
+}
+
+/** Update a category's subtype config. Mirrors updateProduct's subtype logic. */
+export async function updateCategorySubtypes(
+  id: ID,
+  input: {
+    subtypes: string[];
+    default_subtype: string | null;
+    subtype_links: Record<string, ID>;
+  }
+): Promise<void> {
+  const cleaned = normalizeSubtypes(input.subtypes);
+  const effectiveDefault =
+    input.default_subtype && cleaned.includes(input.default_subtype)
+      ? input.default_subtype
+      : null;
+  await db.categories.update(id, {
+    subtypes: cleaned,
+    default_subtype: effectiveDefault,
+    subtype_links: pruneLinks(input.subtype_links, cleaned),
+    updated_at: Date.now(),
+  });
 }
 
 export async function renameCategory(id: ID, name: string): Promise<void> {
@@ -351,6 +376,91 @@ export function withSubtypeDefaults(p: Product): Product {
     subtypes: p.subtypes ?? [],
     default_subtype: p.default_subtype ?? null,
     subtype_links: p.subtype_links ?? {},
+  };
+}
+
+export interface ResolvedSubtypeConfig {
+  subtypes: string[];
+  default_subtype: string | null;
+  subtype_links: Record<string, ID>;
+  /** id of the category we inherited from, or null if the product defines its own. */
+  inherited_from: ID | null;
+}
+
+/**
+ * Resolve a product's effective subtype configuration. If the product has any
+ * subtypes of its own, those win; otherwise we walk up its category ancestors
+ * and use the first ancestor that defines subtypes. If nothing is found,
+ * returns an empty config.
+ */
+export function resolveSubtypeConfig(
+  product: Pick<Product, 'category_id' | 'subtypes' | 'default_subtype' | 'subtype_links'>,
+  categoriesById: Map<ID, Category>
+): ResolvedSubtypeConfig {
+  const own = product.subtypes ?? [];
+  if (own.length > 0) {
+    return {
+      subtypes: own,
+      default_subtype: product.default_subtype ?? null,
+      subtype_links: product.subtype_links ?? {},
+      inherited_from: null,
+    };
+  }
+  let catId: ID | null = product.category_id;
+  while (catId) {
+    const cat = categoriesById.get(catId);
+    if (!cat) break;
+    const catSubs = cat.subtypes ?? [];
+    if (catSubs.length > 0) {
+      return {
+        subtypes: catSubs,
+        default_subtype: cat.default_subtype ?? null,
+        subtype_links: cat.subtype_links ?? {},
+        inherited_from: cat.id,
+      };
+    }
+    catId = cat.parent_id;
+  }
+  return {
+    subtypes: [],
+    default_subtype: null,
+    subtype_links: {},
+    inherited_from: null,
+  };
+}
+
+/** Async variant — loads categories itself. Used inside domain transactions. */
+export async function resolveSubtypeConfigAsync(
+  product: Pick<Product, 'category_id' | 'subtypes' | 'default_subtype' | 'subtype_links'>
+): Promise<ResolvedSubtypeConfig> {
+  if ((product.subtypes ?? []).length > 0) {
+    return {
+      subtypes: product.subtypes,
+      default_subtype: product.default_subtype ?? null,
+      subtype_links: product.subtype_links ?? {},
+      inherited_from: null,
+    };
+  }
+  let catId: ID | null = product.category_id;
+  while (catId) {
+    const cat: Category | undefined = await db.categories.get(catId);
+    if (!cat) break;
+    const catSubs = cat.subtypes ?? [];
+    if (catSubs.length > 0) {
+      return {
+        subtypes: catSubs,
+        default_subtype: cat.default_subtype ?? null,
+        subtype_links: cat.subtype_links ?? {},
+        inherited_from: cat.id,
+      };
+    }
+    catId = cat.parent_id;
+  }
+  return {
+    subtypes: [],
+    default_subtype: null,
+    subtype_links: {},
+    inherited_from: null,
   };
 }
 

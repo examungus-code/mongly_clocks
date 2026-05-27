@@ -18,6 +18,13 @@ export interface Category {
   name: string;
   parent_id: ID | null;
   sort_order: number;
+  // Optional subtype config that inherits down to products in this category
+  // (and recursively to all sub-categories). Products override by defining
+  // their own non-empty subtypes; otherwise they use the closest ancestor
+  // category that has subtypes set. Same shape as Product's three fields.
+  subtypes: string[];
+  default_subtype: string | null;
+  subtype_links: Record<string, ID>;
   created_at: number;
   updated_at: number;
 }
@@ -207,4 +214,8 @@ export const db = new ClockworkDB();
 //     Session(Record).default_payment_type_id are all gone. Older clients
 //     reading v5 data have nowhere to source these from and would crash on
 //     fmtCurrency — refuse pull.
-export const SCHEMA_VERSION = 5;
+// v6: Category gains subtypes / default_subtype / subtype_links. Products
+//     inherit the closest ancestor category's config when they don't
+//     define their own. Older clients miss the inheritance and would skip
+//     component decrements at sale time — refuse pull.
+export const SCHEMA_VERSION = 6;

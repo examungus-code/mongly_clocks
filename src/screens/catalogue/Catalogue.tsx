@@ -37,6 +37,7 @@ import {
 import { PhotoImg } from '../../components/PhotoImg';
 import { Confirm } from '../../components/Confirm';
 import { ProductEditor } from './ProductEditor';
+import { CategoryEditor } from './CategoryEditor';
 
 export function Catalogue() {
   const categories = useLiveQuery(() => db.categories.toArray());
@@ -81,6 +82,7 @@ export function Catalogue() {
 
   const [selectedCat, setSelectedCat] = useState<ID | null>(null);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [newProductInCat, setNewProductInCat] = useState<ID | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Category | null>(null);
 
@@ -221,6 +223,7 @@ export function Catalogue() {
                       setSelectedCat(id);
                     }
                   }}
+                  onEditSubtypes={(cat) => setEditingCategory(cat)}
                   onDelete={(cat) => setPendingDelete(cat)}
                 />
               ))}
@@ -290,6 +293,12 @@ export function Catalogue() {
           }}
         />
       )}
+      {editingCategory && (
+        <CategoryEditor
+          category={editingCategory}
+          onClose={() => setEditingCategory(null)}
+        />
+      )}
       {pendingDelete && (
         <DeleteCategoryDialog
           category={pendingDelete}
@@ -318,6 +327,7 @@ function TreeRow({
   onSelect,
   onRename,
   onAddChild,
+  onEditSubtypes,
   onDelete,
 }: {
   node: CategoryNode;
@@ -326,6 +336,7 @@ function TreeRow({
   onSelect: (id: ID) => void;
   onRename: (id: ID) => void;
   onAddChild: (parent_id: ID) => void;
+  onEditSubtypes: (cat: Category) => void;
   onDelete: (cat: Category) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
@@ -390,6 +401,7 @@ function TreeRow({
         <CategoryMenu
           onRename={() => onRename(node.id)}
           onAddChild={() => onAddChild(node.id)}
+          onEditSubtypes={() => onEditSubtypes(node)}
           onDelete={() => onDelete(node)}
         />
       </div>
@@ -404,6 +416,7 @@ function TreeRow({
               onSelect={onSelect}
               onRename={onRename}
               onAddChild={onAddChild}
+              onEditSubtypes={onEditSubtypes}
               onDelete={onDelete}
             />
           ))}
@@ -416,10 +429,12 @@ function TreeRow({
 function CategoryMenu({
   onRename,
   onAddChild,
+  onEditSubtypes,
   onDelete,
 }: {
   onRename: () => void;
   onAddChild: () => void;
+  onEditSubtypes: () => void;
   onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -488,6 +503,15 @@ function CategoryMenu({
             }}
           >
             Rename
+          </button>
+          <button
+            className="block w-full text-left px-3 py-1.5 hover:bg-parchment-dark"
+            onClick={() => {
+              setOpen(false);
+              onEditSubtypes();
+            }}
+          >
+            Edit subtypes
           </button>
           <button
             className="block w-full text-left px-3 py-1.5 text-copper hover:bg-parchment-dark"
