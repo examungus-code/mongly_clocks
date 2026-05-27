@@ -38,11 +38,23 @@ export function StartSession() {
       });
       chosenFestival = id;
     }
+    const startedAt = Date.now();
     await db.session.put({
       id: 'session',
       festival_id: chosenFestival || null,
       default_payment_type_id: paymentTypeId,
-      started_at: Date.now(),
+      started_at: startedAt,
+    });
+    // History: append a SessionRecord so the catalogue's session selector
+    // shows it. Active record = ended_at === null.
+    await db.session_records.add({
+      id: uuid(),
+      festival_id: chosenFestival || null,
+      default_payment_type_id: paymentTypeId,
+      started_at: startedAt,
+      ended_at: null,
+      created_at: startedAt,
+      updated_at: startedAt,
     });
     navigate('/sell');
   }

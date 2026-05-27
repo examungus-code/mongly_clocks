@@ -13,7 +13,34 @@ function guessDeviceLabel(): string {
   return 'Device';
 }
 
+/**
+ * One-off migration: if the Session singleton is active but there's no
+ * SessionRecord for it (upgrading from a pre-v4 install where she was mid-
+ * session at the moment of update), backfill a record so the new history
+ * dropdown shows it. Runs on every app boot — cheap and idempotent.
+ */
+async function backfillActiveSessionRecord(): Promise<void> {
+  const singleton = await db.session.get('session');
+  if (!singleton?.started_at) return;
+  const matching = await db.session_records
+    .where('started_at')
+    .equals(singleton.started_at)
+    .first();
+  if (matching) return;
+  const now = Date.now();
+  await db.session_records.add({
+    id: uuid(),
+    festival_id: singleton.festival_id,
+    default_payment_type_id: singleton.default_payment_type_id,
+    started_at: singleton.started_at,
+    ended_at: null,
+    created_at: now,
+    updated_at: now,
+  });
+}
+
 export async function seedIfNeeded(): Promise<void> {
+  await backfillActiveSessionRecord();
   const prefs = await db.prefs.get('prefs');
   if (prefs?.schema_seeded) return;
 

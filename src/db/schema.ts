@@ -121,11 +121,28 @@ export interface Photo {
 }
 
 // Local-only, not synced. Lives in a single-row table keyed by 'session'.
+// Mirrors the currently-active SessionRecord for fast lookup and to keep
+// existing consumers working unchanged.
 export interface Session {
   id: 'session';
   festival_id: ID | null;
   default_payment_type_id: ID | null;
   started_at: number | null;
+}
+
+// Synced history of every session (start + festival + end). Each entry is
+// effectively one selling event (a faire day, a market, etc.). Transactions
+// are bound to a session by their occurred_at falling between
+// started_at and ended_at — we don't store session_id on the transaction
+// to avoid a schema change on Transaction.
+export interface SessionRecord {
+  id: ID;
+  festival_id: ID | null;
+  default_payment_type_id: ID | null;
+  started_at: number;
+  ended_at: number | null; // null = still active
+  created_at: number;
+  updated_at: number;
 }
 
 // Local-only sync metadata, single-row keyed by 'sync'.
@@ -155,6 +172,7 @@ class ClockworkDB extends Dexie {
   payment_types!: Table<PaymentType, ID>;
   photos!: Table<Photo, ID>;
   session!: Table<Session, 'session'>;
+  session_records!: Table<SessionRecord, ID>;
   sync_meta!: Table<SyncMetadata, 'sync'>;
   prefs!: Table<AppPrefs, 'prefs'>;
 
@@ -173,6 +191,12 @@ class ClockworkDB extends Dexie {
       sync_meta: 'id',
       prefs: 'id',
     });
+    // v2 schema: adds session_records table. Existing devices upgrade
+    // automatically and start tracking new sessions; old in-flight singleton
+    // sessions are promoted into the new table at app start (see seed.ts).
+    this.version(2).stores({
+      session_records: 'id, started_at, ended_at, festival_id',
+    });
   }
 }
 
@@ -186,4 +210,6 @@ export const db = new ClockworkDB();
 //     devices ignore unknown fields and unknown reasons just render as text;
 //     refusing the pull is still the safe move because they'd miss the
 //     component side-effects on sales.
-export const SCHEMA_VERSION = 3;
+// v4: SessionRecord table (history of every session). Older clients would
+//     lose this history on round-trip; refuse pull.
+export const SCHEMA_VERSION = 4;

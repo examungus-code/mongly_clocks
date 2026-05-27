@@ -178,10 +178,26 @@ export function Sell() {
         <button
           className="btn-ghost text-sm"
           onClick={async () => {
-            if (confirm('End session?')) {
-              await db.session.update('session', { started_at: null });
-              navigate('/');
+            if (!confirm('End session?')) return;
+            const now = Date.now();
+            // Close the matching SessionRecord (the one currently active).
+            // Match by started_at since that's the singleton's only handle
+            // back to the record.
+            const startedAt = session?.started_at ?? null;
+            if (startedAt) {
+              const active = await db.session_records
+                .where('started_at')
+                .equals(startedAt)
+                .first();
+              if (active && active.ended_at === null) {
+                await db.session_records.update(active.id, {
+                  ended_at: now,
+                  updated_at: now,
+                });
+              }
             }
+            await db.session.update('session', { started_at: null });
+            navigate('/');
           }}
         >
           End

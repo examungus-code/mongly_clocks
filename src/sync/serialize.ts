@@ -12,6 +12,7 @@ import type {
   InventoryAdjustment,
   PaymentType,
   Product,
+  SessionRecord,
   Transaction,
   TransactionLineItem,
 } from '../db/schema';
@@ -26,6 +27,7 @@ export interface SnapshotPayload {
   line_items: TransactionLineItem[];
   festivals: Festival[];
   payment_types: PaymentType[];
+  session_records: SessionRecord[];
   photos: Array<{ id: string; ext: string }>;
 }
 
@@ -38,6 +40,7 @@ export async function snapshotLocal(): Promise<SnapshotPayload> {
     line_items,
     festivals,
     payment_types,
+    session_records,
     photos,
   ] = await Promise.all([
     db.categories.toArray(),
@@ -47,6 +50,7 @@ export async function snapshotLocal(): Promise<SnapshotPayload> {
     db.line_items.toArray(),
     db.festivals.toArray(),
     db.payment_types.toArray(),
+    db.session_records.toArray(),
     db.photos.toArray(),
   ]);
 
@@ -60,6 +64,7 @@ export async function snapshotLocal(): Promise<SnapshotPayload> {
     line_items,
     festivals,
     payment_types,
+    session_records,
     photos: photos.map((p) => ({
       id: p.id,
       ext: deriveExt(p.file),
@@ -81,6 +86,7 @@ export async function restoreLocal(
       db.line_items,
       db.festivals,
       db.payment_types,
+      db.session_records,
       db.photos,
     ],
     async () => {
@@ -92,6 +98,7 @@ export async function restoreLocal(
         db.line_items.clear(),
         db.festivals.clear(),
         db.payment_types.clear(),
+        db.session_records.clear(),
         db.photos.clear(),
       ]);
       await db.categories.bulkAdd(snapshot.categories);
@@ -101,6 +108,8 @@ export async function restoreLocal(
       await db.line_items.bulkAdd(snapshot.line_items);
       await db.festivals.bulkAdd(snapshot.festivals);
       await db.payment_types.bulkAdd(snapshot.payment_types);
+      // Older snapshots may not include session_records; default to [].
+      await db.session_records.bulkAdd(snapshot.session_records ?? []);
       for (const [id, file] of freshPhotos) {
         await db.photos.put({ id, file });
       }

@@ -8,7 +8,7 @@
 //   - drag a product card above/below another to reorder within the category
 // Cycles are blocked at the domain layer (moveCategory throws).
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   DndContext,
@@ -43,6 +43,42 @@ export function Catalogue() {
   const categories = useLiveQuery(() => db.categories.toArray());
   const products = useLiveQuery(() => db.products.toArray());
   const tree = categories && products ? buildTree(categories, products) : null;
+
+  // Session selector + per-product sold counts. 'total' = all sessions.
+  const sessions = useLiveQuery(() =>
+    db.session_records.orderBy('started_at').reverse().toArray()
+  );
+  const festivals = useLiveQuery(() => db.festivals.toArray());
+  const transactions = useLiveQuery(() => db.transactions.toArray());
+  const lineItems = useLiveQuery(() => db.line_items.toArray());
+  const [selectedSession, setSelectedSession] = useState<string>('total');
+
+  // Map<product_id, qty sold> for the currently-selected session (or all
+  // sessions if 'total'). Recomputed any time the inputs change.
+  const soldByProduct = useMemo(() => {
+    const map = new Map<ID, number>();
+    if (!transactions || !lineItems) return map;
+    let txIds: Set<ID> | null = null;
+    if (selectedSession !== 'total') {
+      const session = sessions?.find((s) => s.id === selectedSession);
+      if (!session) return map;
+      const start = session.started_at;
+      const end = session.ended_at ?? Infinity;
+      txIds = new Set(
+        transactions
+          .filter((t) => t.occurred_at >= start && t.occurred_at <= end)
+          .map((t) => t.id)
+      );
+    }
+    for (const line of lineItems) {
+      if (txIds && !txIds.has(line.transaction_id)) continue;
+      map.set(
+        line.product_id,
+        (map.get(line.product_id) ?? 0) + line.quantity
+      );
+    }
+    return map;
+  }, [transactions, lineItems, sessions, selectedSession]);
 
   const [selectedCat, setSelectedCat] = useState<ID | null>(null);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -107,8 +143,41 @@ export function Catalogue() {
 
   if (!tree) return <div>Loading…</div>;
 
+  function sessionLabel(s: { festival_id: ID | null; started_at: number; ended_at: number | null }): string {
+    const festName = s.festival_id
+      ? festivals?.find((f) => f.id === s.festival_id)?.name ?? '—'
+      : '—';
+    const d = new Date(s.started_at).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+    const suffix = s.ended_at === null ? ' · active' : '';
+    return `${festName} · ${d}${suffix}`;
+  }
+
   return (
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+      <div className="flex items-center gap-3 mb-3">
+        <label className="text-sm font-ui text-walnut/70">
+          Session
+        </label>
+        <select
+          className="input !min-h-0 !py-1.5 max-w-xs"
+          value={selectedSession}
+          onChange={(e) => setSelectedSession(e.target.value)}
+        >
+          <option value="total">Total (all sessions)</option>
+          {sessions?.map((s) => (
+            <option key={s.id} value={s.id}>
+              {sessionLabel(s)}
+            </option>
+          ))}
+        </select>
+        <span className="text-xs text-walnut/60">
+          Sold counts on each product reflect this selection.
+        </span>
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-[280px_1fr] gap-4 min-h-[60vh]">
         <aside className="card p-3">
           <div className="flex items-center justify-between mb-2">
@@ -187,6 +256,7 @@ export function Catalogue() {
                     <ProductCard
                       key={p.id}
                       product={p}
+                      sold={soldByProduct.get(p.id) ?? 0}
                       onClick={() => setEditingProduct(p)}
                     />
                   ))}
@@ -452,9 +522,11 @@ function RootDropZone() {
 
 function ProductCard({
   product,
+  sold,
   onClick,
 }: {
   product: Product;
+  sold: number;
   onClick: () => void;
 }) {
   const {
@@ -490,7 +562,9 @@ function ProductCard({
         </div>
         <div className="flex justify-between text-xs text-walnut/60">
           <span>{fmtCurrency(product.list_price)}</span>
-          <span>qty {product.quantity_on_hand}</span>
+          <span>
+            sold {sold} · qty {product.quantity_on_hand}
+          </span>
         </div>
       </div>
     </div>
