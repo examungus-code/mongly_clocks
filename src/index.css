@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Lora:wght@400;500;600&family=Inter:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -11,13 +11,10 @@
     @apply h-full;
   }
   body {
-    @apply font-body text-walnut bg-parchment antialiased;
-    background-image:
-      radial-gradient(circle at 20% 10%, rgba(122, 74, 46, 0.07), transparent 60%),
-      radial-gradient(circle at 80% 80%, rgba(181, 137, 90, 0.08), transparent 60%);
+    @apply font-body text-walnut bg-white antialiased;
   }
   h1, h2, h3, h4 {
-    @apply font-display text-walnut-dark;
+    @apply font-display text-walnut font-semibold tracking-tight;
   }
 }
 
@@ -27,23 +24,25 @@
            transition-colors select-none disabled:opacity-50 disabled:cursor-not-allowed
            min-h-[44px];
   }
+  /* Primary = brand gold with black text. Hover darkens the gold slightly so
+     the press has tactile feedback without going off-brand. */
   .btn-primary {
-    @apply btn bg-brass-dark text-parchment-light hover:bg-walnut shadow-brass;
+    @apply btn bg-brass text-walnut hover:bg-brass-dark;
   }
   .btn-secondary {
-    @apply btn border border-walnut/30 bg-parchment-light text-walnut hover:bg-parchment-dark;
+    @apply btn border border-walnut/20 bg-white text-walnut hover:bg-parchment-dark;
   }
   .btn-danger {
-    @apply btn bg-copper text-parchment-light hover:bg-copper-light;
+    @apply btn bg-copper text-white hover:bg-copper-light;
   }
   .btn-ghost {
     @apply btn text-walnut hover:bg-parchment-dark;
   }
   .card {
-    @apply bg-parchment-light border border-brass/30 rounded-lg shadow-sm;
+    @apply bg-white border border-walnut/10 rounded-lg shadow-sm;
   }
   .input {
-    @apply w-full px-3 py-2 rounded-md bg-parchment-light border border-walnut/20
+    @apply w-full px-3 py-2 rounded-md bg-white border border-walnut/15
            text-walnut placeholder:text-walnut/40 focus:outline-none
            focus:border-brass focus:ring-2 focus:ring-brass/30 min-h-[44px];
   }
@@ -51,7 +50,7 @@
     @apply block text-sm font-ui font-medium text-walnut mb-1;
   }
   .tile {
-    @apply card overflow-hidden cursor-pointer hover:shadow-brass transition-shadow;
+    @apply card overflow-hidden cursor-pointer hover:border-brass/60 hover:shadow-brass transition-all;
   }
 }
 

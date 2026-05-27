@@ -16,9 +16,9 @@ export default defineConfig({
       manifest: {
         name: 'Clockwork Traveler',
         short_name: 'Clockwork',
-        description: 'Inventory and point-of-sale for handmade jewelry sold at festivals',
-        theme_color: '#B5895A',
-        background_color: '#F2E8D5',
+        description: 'Offline-first inventory for handmade jewelry sold at festivals',
+        theme_color: '#FFC700',
+        background_color: '#FFFFFF',
         display: 'standalone',
         orientation: 'portrait',
         start_url: BASE,

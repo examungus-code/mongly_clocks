@@ -3,40 +3,46 @@ export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
+      // Palette pulled from clockworktraveler.com (Squarespace site.css):
+      //   --white      #FFFFFF
+      //   --black      #000000
+      //   --accent     #FFC700  (warm gold — the single brand accent)
+      //   --light      #F4F4F3  (muted surface)
+      //   --dark       #383838  (muted text)
+      // Token names below are kept aliased to the original steampunk scheme so
+      // we don't have to touch every component; the values are remapped to the
+      // real brand.
       colors: {
-        // Clockwork Traveler palette
         brass: {
-          DEFAULT: '#B5895A',
-          light: '#C9A37A',
-          dark: '#8E6A40',
+          DEFAULT: '#FFC700',
+          light: '#FFE066',
+          dark: '#E8B500',
         },
         walnut: {
-          DEFAULT: '#3B2A1E',
-          light: '#5A4030',
-          dark: '#2A1D14',
+          DEFAULT: '#000000',
+          light: '#383838',
+          dark: '#000000',
         },
         parchment: {
-          DEFAULT: '#F2E8D5',
-          light: '#F8F1E3',
-          dark: '#E0D2B6',
+          DEFAULT: '#FFFFFF',
+          light: '#FFFFFF',
+          dark: '#F4F4F3',
         },
         copper: {
-          DEFAULT: '#7A4A2E',
-          light: '#9A6342',
+          DEFAULT: '#B53E2E',
+          light: '#D55A4A',
         },
-        gearshadow: '#1A130C',
+        gearshadow: '#000000',
       },
       fontFamily: {
-        display: ['"Cormorant Garamond"', 'Georgia', 'serif'],
-        body: ['Lora', 'Georgia', 'serif'],
-        ui: ['Inter', 'system-ui', 'sans-serif'],
+        // Brand uses Poppins exclusively — one family for everything.
+        display: ['Poppins', 'system-ui', 'sans-serif'],
+        body: ['Poppins', 'system-ui', 'sans-serif'],
+        ui: ['Poppins', 'system-ui', 'sans-serif'],
       },
       boxShadow: {
-        inset: 'inset 0 2px 4px 0 rgba(26, 19, 12, 0.15)',
-        brass: '0 2px 8px 0 rgba(142, 106, 64, 0.35)',
-      },
-      backgroundImage: {
-        parchment: "url('/mongly_clocks/textures/parchment.svg')",
+        inset: 'inset 0 2px 4px 0 rgba(0, 0, 0, 0.08)',
+        brass: '0 2px 8px 0 rgba(255, 199, 0, 0.35)',
       },
     },
   },
