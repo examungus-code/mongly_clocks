@@ -1,13 +1,37 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+import { execSync } from 'node:child_process';
 
 // Deployed at https://examungus-code.github.io/mongly_clocks/ — subpath base.
 // If a custom domain is ever wired up, switch base back to '/'.
 const BASE = '/mongly_clocks/';
 
+// Version string injected as __BUILD_VERSION__ so every deploy is visible at
+// runtime — short git SHA + build-time HH:MM, so even a rebuild of the same
+// commit shows a different number. Falls back gracefully for non-git builds.
+function buildVersion(): string {
+  let sha = 'dev';
+  try {
+    sha = execSync('git rev-parse --short HEAD', {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+      .toString()
+      .trim();
+  } catch {
+    /* not a git checkout */
+  }
+  const stamp = new Date()
+    .toISOString()
+    .slice(11, 16); // HH:MM
+  return `${sha} · ${stamp}`;
+}
+
 export default defineConfig({
   base: BASE,
+  define: {
+    __BUILD_VERSION__: JSON.stringify(buildVersion()),
+  },
   plugins: [
     react(),
     VitePWA({

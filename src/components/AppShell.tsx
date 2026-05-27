@@ -26,8 +26,11 @@ export function AppShell({ children }: { children: ReactNode }) {
               className="h-8 sm:h-10 w-auto"
             />
           </NavLink>
-          <span className="text-xs text-walnut/50 font-ui hidden sm:inline">
-            offline-first inventory
+          <span
+            className="text-xs text-walnut/50 font-mono tabular-nums"
+            title="Build version — increments every deploy"
+          >
+            {__BUILD_VERSION__}
           </span>
         </div>
       </header>

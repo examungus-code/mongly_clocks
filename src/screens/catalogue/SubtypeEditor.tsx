@@ -1,6 +1,6 @@
 // Shared subtype-list editor used by both ProductEditor and CategoryEditor.
-// Each row is: radio (default) + name input + linked product dropdown + ✕.
-// "No default (operator must pick)" sits as a separate radio below the list.
+// Each row is: name input + linked product dropdown + ✕. No defaults — at
+// sale time the operator always has to pick.
 
 import type { ID } from '../../db/schema';
 
@@ -11,21 +11,17 @@ interface LinkableProduct {
 
 interface Props {
   subtypes: string[];
-  defaultSubtype: string | null;
   subtypeLinks: Record<string, ID>;
   linkableProducts: LinkableProduct[];
   onSubtypesChange: (next: string[]) => void;
-  onDefaultChange: (next: string | null) => void;
   onLinksChange: (next: Record<string, ID>) => void;
 }
 
 export function SubtypeEditor({
   subtypes,
-  defaultSubtype,
   subtypeLinks,
   linkableProducts,
   onSubtypesChange,
-  onDefaultChange,
   onLinksChange,
 }: Props) {
   function setRow(i: number, value: string) {
@@ -33,7 +29,6 @@ export function SubtypeEditor({
     const newKey = value.trim();
     const next = [...subtypes];
     next[i] = value;
-    if (defaultSubtype === oldKey) onDefaultChange(newKey);
     if (oldKey !== newKey && subtypeLinks[oldKey]) {
       const updated = { ...subtypeLinks };
       updated[newKey] = updated[oldKey];
@@ -46,7 +41,6 @@ export function SubtypeEditor({
   function removeRow(i: number) {
     const removed = subtypes[i].trim();
     onSubtypesChange(subtypes.filter((_, j) => j !== i));
-    if (defaultSubtype === removed) onDefaultChange(null);
     if (removed && subtypeLinks[removed]) {
       const updated = { ...subtypeLinks };
       delete updated[removed];
@@ -65,21 +59,12 @@ export function SubtypeEditor({
     <ul className="space-y-2">
       {subtypes.map((sub, i) => {
         const trimmed = sub.trim();
-        const isDefault = !!trimmed && defaultSubtype === trimmed;
         const linkedId = trimmed ? subtypeLinks[trimmed] ?? '' : '';
         return (
           <li
             key={i}
-            className="grid grid-cols-[auto_1fr_auto] sm:grid-cols-[auto_1fr_1fr_auto] gap-2 items-center"
+            className="grid grid-cols-[1fr_auto] sm:grid-cols-[1fr_1fr_auto] gap-2 items-center"
           >
-            <input
-              type="radio"
-              name="subtype-default"
-              checked={isDefault}
-              disabled={!trimmed}
-              onChange={() => onDefaultChange(trimmed)}
-              title="Default at sale time"
-            />
             <input
               className="input !min-h-0 !py-1.5"
               placeholder="Subtype name"
@@ -104,7 +89,7 @@ export function SubtypeEditor({
             </select>
             <button
               type="button"
-              className="text-copper text-sm px-1 col-start-3 sm:col-start-4"
+              className="text-copper text-sm px-1 col-start-2 sm:col-start-3"
               onClick={() => removeRow(i)}
               title="Remove"
             >
@@ -113,19 +98,6 @@ export function SubtypeEditor({
           </li>
         );
       })}
-      {subtypes.length > 0 && (
-        <li>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="radio"
-              name="subtype-default"
-              checked={defaultSubtype === null}
-              onChange={() => onDefaultChange(null)}
-            />
-            <span>No default (operator must pick)</span>
-          </label>
-        </li>
-      )}
     </ul>
   );
 }

@@ -140,14 +140,14 @@ export function Sell() {
 
   function handleTileTap(product: Product) {
     // Effective subtype config = product's own if defined, else inherited from
-    // the closest category ancestor that defines subtypes.
+    // the closest category ancestor that defines subtypes. When subtypes
+    // exist, the operator always picks — there are no defaults.
     const cfg = resolveSubtypeConfig(product, categoryById);
-    const hasSubtypes = cfg.subtypes.length > 0;
-    if (hasSubtypes && !cfg.default_subtype) {
+    if (cfg.subtypes.length > 0) {
       setPickingSubtypeFor(product);
       return;
     }
-    void sellNow(product, hasSubtypes ? cfg.default_subtype : null);
+    void sellNow(product, null);
   }
 
   function showToast(name: string) {
@@ -291,9 +291,7 @@ export function Sell() {
                   if (cfg.subtypes.length === 0) return null;
                   return (
                     <div className="text-[10px] text-walnut/50 truncate mt-0.5">
-                      {cfg.default_subtype
-                        ? `→ ${cfg.default_subtype}`
-                        : '↳ pick subtype'}
+                      ↳ pick subtype
                     </div>
                   );
                 })()}

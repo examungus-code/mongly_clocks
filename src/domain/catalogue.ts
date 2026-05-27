@@ -72,7 +72,6 @@ export async function createCategory(
     parent_id,
     sort_order: maxOrder + 1,
     subtypes: [],
-    default_subtype: null,
     subtype_links: {},
     created_at: now,
     updated_at: now,
@@ -85,18 +84,12 @@ export async function updateCategorySubtypes(
   id: ID,
   input: {
     subtypes: string[];
-    default_subtype: string | null;
     subtype_links: Record<string, ID>;
   }
 ): Promise<void> {
   const cleaned = normalizeSubtypes(input.subtypes);
-  const effectiveDefault =
-    input.default_subtype && cleaned.includes(input.default_subtype)
-      ? input.default_subtype
-      : null;
   await db.categories.update(id, {
     subtypes: cleaned,
-    default_subtype: effectiveDefault,
     subtype_links: pruneLinks(input.subtype_links, cleaned),
     updated_at: Date.now(),
   });
@@ -226,7 +219,6 @@ export interface NewProductInput {
   initial_quantity: number;
   photo_file: File | null;
   subtypes: string[];
-  default_subtype: string | null;
   subtype_links: Record<string, ID>;
 }
 
@@ -258,7 +250,6 @@ export async function createProduct(input: NewProductInput): Promise<ID> {
       sort_order: maxOrder + 1,
       archived: false,
       subtypes: cleanedSubtypes,
-      default_subtype: input.default_subtype,
       subtype_links: pruneLinks(input.subtype_links, cleanedSubtypes),
       created_at: now,
       updated_at: now,
@@ -288,7 +279,6 @@ export interface UpdateProductInput {
   photo_file?: File | null; // null = clear photo, undefined = no change
   category_id?: ID;
   subtypes?: string[];
-  default_subtype?: string | null;
   subtype_links?: Record<string, ID>;
 }
 
@@ -306,8 +296,6 @@ export async function updateProduct(
   if (input.category_id !== undefined) patch.category_id = input.category_id;
   if (input.subtypes !== undefined)
     patch.subtypes = normalizeSubtypes(input.subtypes);
-  if (input.default_subtype !== undefined)
-    patch.default_subtype = input.default_subtype;
   if (input.subtype_links !== undefined) {
     // Prune links whose subtype no longer exists. Use the post-normalize
     // subtypes if the caller is also updating subtypes; otherwise fall back
@@ -374,14 +362,12 @@ export function withSubtypeDefaults(p: Product): Product {
   return {
     ...p,
     subtypes: p.subtypes ?? [],
-    default_subtype: p.default_subtype ?? null,
     subtype_links: p.subtype_links ?? {},
   };
 }
 
 export interface ResolvedSubtypeConfig {
   subtypes: string[];
-  default_subtype: string | null;
   subtype_links: Record<string, ID>;
   /** id of the category we inherited from, or null if the product defines its own. */
   inherited_from: ID | null;
@@ -394,14 +380,13 @@ export interface ResolvedSubtypeConfig {
  * returns an empty config.
  */
 export function resolveSubtypeConfig(
-  product: Pick<Product, 'category_id' | 'subtypes' | 'default_subtype' | 'subtype_links'>,
+  product: Pick<Product, 'category_id' | 'subtypes' | 'subtype_links'>,
   categoriesById: Map<ID, Category>
 ): ResolvedSubtypeConfig {
   const own = product.subtypes ?? [];
   if (own.length > 0) {
     return {
       subtypes: own,
-      default_subtype: product.default_subtype ?? null,
       subtype_links: product.subtype_links ?? {},
       inherited_from: null,
     };
@@ -414,7 +399,6 @@ export function resolveSubtypeConfig(
     if (catSubs.length > 0) {
       return {
         subtypes: catSubs,
-        default_subtype: cat.default_subtype ?? null,
         subtype_links: cat.subtype_links ?? {},
         inherited_from: cat.id,
       };
@@ -423,7 +407,6 @@ export function resolveSubtypeConfig(
   }
   return {
     subtypes: [],
-    default_subtype: null,
     subtype_links: {},
     inherited_from: null,
   };
@@ -431,12 +414,11 @@ export function resolveSubtypeConfig(
 
 /** Async variant — loads categories itself. Used inside domain transactions. */
 export async function resolveSubtypeConfigAsync(
-  product: Pick<Product, 'category_id' | 'subtypes' | 'default_subtype' | 'subtype_links'>
+  product: Pick<Product, 'category_id' | 'subtypes' | 'subtype_links'>
 ): Promise<ResolvedSubtypeConfig> {
   if ((product.subtypes ?? []).length > 0) {
     return {
       subtypes: product.subtypes,
-      default_subtype: product.default_subtype ?? null,
       subtype_links: product.subtype_links ?? {},
       inherited_from: null,
     };
@@ -449,7 +431,6 @@ export async function resolveSubtypeConfigAsync(
     if (catSubs.length > 0) {
       return {
         subtypes: catSubs,
-        default_subtype: cat.default_subtype ?? null,
         subtype_links: cat.subtype_links ?? {},
         inherited_from: cat.id,
       };
@@ -458,7 +439,6 @@ export async function resolveSubtypeConfigAsync(
   }
   return {
     subtypes: [],
-    default_subtype: null,
     subtype_links: {},
     inherited_from: null,
   };

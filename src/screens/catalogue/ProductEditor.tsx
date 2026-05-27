@@ -39,12 +39,9 @@ export function ProductEditor(props: Props) {
   const [photoCleared, setPhotoCleared] = useState(false);
   const [saving, setSaving] = useState(false);
   // Subtypes: editable as a list of strings. Empty = no subtypes for this
-  // product. default_subtype is one of the subtype strings, or null for "no
-  // default (operator must pick)".
+  // product. There are no defaults — at sale time, when a product has
+  // subtypes, the operator always has to pick one.
   const [subtypes, setSubtypes] = useState<string[]>(existing?.subtypes ?? []);
-  const [defaultSubtype, setDefaultSubtype] = useState<string | null>(
-    existing?.default_subtype ?? null
-  );
   // Component links per subtype (subtype name -> linked product id). Renames
   // and removals are reflected here in the rename/delete handlers below.
   const [subtypeLinks, setSubtypeLinks] = useState<Record<string, ID>>(
@@ -69,7 +66,6 @@ export function ProductEditor(props: Props) {
           {
             category_id: probeCategoryId,
             subtypes: [],
-            default_subtype: null,
             subtype_links: {},
           },
           new Map(allCategories.map((c) => [c.id, c]))
@@ -108,15 +104,10 @@ export function ProductEditor(props: Props) {
   }, [photoPreviewUrl]);
 
   // Clean subtypes before save: trim, drop empties, dedupe (mirror normalize
-  // in the domain layer so the default picker stays consistent).
+  // in the domain layer).
   const cleanSubtypes = subtypes
     .map((s) => s.trim())
     .filter((s, i, a) => s && a.indexOf(s) === i);
-  // If the default no longer matches any subtype (renamed or removed), reset.
-  const effectiveDefault =
-    defaultSubtype && cleanSubtypes.includes(defaultSubtype)
-      ? defaultSubtype
-      : null;
 
   // Strip links whose key isn't in the cleaned subtypes list (catches renames
   // we missed and removals).
@@ -138,7 +129,6 @@ export function ProductEditor(props: Props) {
           initial_quantity: qty,
           photo_file: photoFile,
           subtypes: cleanSubtypes,
-          default_subtype: effectiveDefault,
           subtype_links: effectiveLinks,
         });
       } else {
@@ -147,7 +137,6 @@ export function ProductEditor(props: Props) {
           description,
           photo_file: photoCleared ? null : (photoFile ?? undefined),
           subtypes: cleanSubtypes,
-          default_subtype: effectiveDefault,
           subtype_links: effectiveLinks,
         });
       }
@@ -266,11 +255,8 @@ export function ProductEditor(props: Props) {
             inheritedFromCategory && inheritProbe ? (
               <div className="text-xs text-walnut/70 bg-brass-soft border border-brass/40 rounded-md px-3 py-2">
                 Inheriting from <strong>{inheritedFromCategory.name}</strong>:{' '}
-                {inheritProbe.subtypes.join(' / ')}
-                {inheritProbe.default_subtype
-                  ? ` (default ${inheritProbe.default_subtype})`
-                  : ' (no default — operator picks)'}
-                . Add subtypes here to override.
+                {inheritProbe.subtypes.join(' / ')}. Add subtypes here to
+                override.
               </div>
             ) : (
               <p className="text-xs text-walnut/60">
@@ -285,18 +271,15 @@ export function ProductEditor(props: Props) {
           ) : (
             <>
               <p className="text-xs text-walnut/60">
-                Pick a default below, or leave “No default” to force the
-                operator to choose. The dropdown next to each subtype
-                optionally links a component product that gets auto-deducted
-                when that subtype sells.
+                The operator picks one of these at sale time. The dropdown
+                next to each subtype optionally links a component product
+                that gets auto-deducted when that subtype sells.
               </p>
               <SubtypeEditor
                 subtypes={subtypes}
-                defaultSubtype={defaultSubtype}
                 subtypeLinks={subtypeLinks}
                 linkableProducts={linkableProducts}
                 onSubtypesChange={setSubtypes}
-                onDefaultChange={setDefaultSubtype}
                 onLinksChange={setSubtypeLinks}
               />
             </>

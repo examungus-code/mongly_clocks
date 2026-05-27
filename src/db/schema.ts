@@ -21,9 +21,8 @@ export interface Category {
   // Optional subtype config that inherits down to products in this category
   // (and recursively to all sub-categories). Products override by defining
   // their own non-empty subtypes; otherwise they use the closest ancestor
-  // category that has subtypes set. Same shape as Product's three fields.
+  // category that has subtypes set.
   subtypes: string[];
-  default_subtype: string | null;
   subtype_links: Record<string, ID>;
   created_at: number;
   updated_at: number;
@@ -41,10 +40,9 @@ export interface Product {
   // Subtypes are optional sale-time variants of a product (e.g. metal: silver
   // / gold / copper). They are *labels* in this model — they don't split the
   // qty pool. If subtypes is empty, no selector is shown at sale time. If
-  // default_subtype is set, it pre-fills the selector; if null, the operator
-  // must pick one before the sale records.
+  // any subtypes are defined, the operator must pick one before the sale
+  // records — no defaults.
   subtypes: string[];
-  default_subtype: string | null;
   // Optional component-product link per subtype. When the necklace is sold
   // with subtype 'gold', the linked product (e.g. "gold chain") is also
   // decremented from inventory via a 'sold_component' adjustment. Keys are

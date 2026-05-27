@@ -21,9 +21,6 @@ export function CategoryEditor({ category, onClose }: Props) {
   }, []);
 
   const [subtypes, setSubtypes] = useState<string[]>(category.subtypes ?? []);
-  const [defaultSubtype, setDefaultSubtype] = useState<string | null>(
-    category.default_subtype ?? null
-  );
   const [subtypeLinks, setSubtypeLinks] = useState<Record<string, ID>>(
     category.subtype_links ?? {}
   );
@@ -37,7 +34,6 @@ export function CategoryEditor({ category, onClose }: Props) {
     try {
       await updateCategorySubtypes(category.id, {
         subtypes,
-        default_subtype: defaultSubtype,
         subtype_links: subtypeLinks,
       });
       onClose();
@@ -79,9 +75,9 @@ export function CategoryEditor({ category, onClose }: Props) {
 
         <p className="text-xs text-walnut/70">
           Every product in this category (and its sub-categories) will inherit
-          these subtypes, the default, and any linked components — unless the
-          product defines its own subtypes, in which case its config wins.
-          Leave empty to remove inheritance.
+          these subtypes and any linked components — unless the product
+          defines its own subtypes, in which case its config wins. Leave
+          empty to remove inheritance.
         </p>
 
         <div className="flex items-center justify-between">
@@ -103,11 +99,9 @@ export function CategoryEditor({ category, onClose }: Props) {
         ) : (
           <SubtypeEditor
             subtypes={subtypes}
-            defaultSubtype={defaultSubtype}
             subtypeLinks={subtypeLinks}
             linkableProducts={linkableProducts}
             onSubtypesChange={setSubtypes}
-            onDefaultChange={setDefaultSubtype}
             onLinksChange={setSubtypeLinks}
           />
         )}
