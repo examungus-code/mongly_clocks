@@ -25,10 +25,12 @@ import {
   createCategory,
   createProduct,
   deleteCategory,
+  hardDeleteProduct,
   moveCategory,
   renameCategory,
   reorderCategories,
   reorderProducts,
+  unarchiveProduct,
   updateProduct,
   archiveProduct,
   type CategoryNode,
@@ -42,7 +44,11 @@ import { CategoryEditor } from './CategoryEditor';
 export function Catalogue() {
   const categories = useLiveQuery(() => db.categories.toArray());
   const products = useLiveQuery(() => db.products.toArray());
-  const tree = categories && products ? buildTree(categories, products) : null;
+  const [showArchived, setShowArchived] = useState(false);
+  const tree =
+    categories && products
+      ? buildTree(categories, products, showArchived ? 'archived' : 'active')
+      : null;
 
   // Session selector + per-product sold counts. 'total' = all sessions.
   const sessions = useLiveQuery(() =>
@@ -85,6 +91,9 @@ export function Catalogue() {
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [newProductInCat, setNewProductInCat] = useState<ID | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Category | null>(null);
+  const [hardDeleteTarget, setHardDeleteTarget] = useState<Product | null>(
+    null
+  );
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
@@ -159,7 +168,7 @@ export function Catalogue() {
 
   return (
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-      <div className="flex items-center gap-3 mb-3">
+      <div className="flex items-center gap-3 mb-3 flex-wrap">
         <label className="text-sm font-ui text-walnut/70">
           Session
         </label>
@@ -175,9 +184,22 @@ export function Catalogue() {
             </option>
           ))}
         </select>
-        <span className="text-xs text-walnut/60">
+        <span className="text-xs text-walnut/60 hidden sm:inline">
           Sold counts on each product reflect this selection.
         </span>
+        <label
+          className={`ml-auto flex items-center gap-2 text-sm font-ui cursor-pointer select-none px-2 py-1 rounded ${
+            showArchived ? 'bg-brass-soft border border-brass/40' : ''
+          }`}
+        >
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(e) => setShowArchived(e.target.checked)}
+            className="cursor-pointer"
+          />
+          Show archived
+        </label>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-[280px_1fr] gap-4 min-h-[60vh]">
         <aside className="card p-3">
@@ -250,7 +272,9 @@ export function Catalogue() {
               </div>
               {selectedNode.products.length === 0 ? (
                 <p className="text-sm text-walnut/60 py-8 text-center">
-                  No products in this category yet.
+                  {showArchived
+                    ? 'No archived products in this category.'
+                    : 'No products in this category yet.'}
                 </p>
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -260,6 +284,17 @@ export function Catalogue() {
                       product={p}
                       sold={soldByProduct.get(p.id) ?? 0}
                       onClick={() => setEditingProduct(p)}
+                      archivedMode={showArchived}
+                      onUnarchive={
+                        showArchived
+                          ? () => void unarchiveProduct(p.id)
+                          : undefined
+                      }
+                      onHardDelete={
+                        showArchived
+                          ? () => setHardDeleteTarget(p)
+                          : undefined
+                      }
                     />
                   ))}
                 </div>
@@ -305,6 +340,32 @@ export function Catalogue() {
           onClose={() => setPendingDelete(null)}
         />
       )}
+      <Confirm
+        open={!!hardDeleteTarget}
+        title={
+          hardDeleteTarget
+            ? `Delete "${hardDeleteTarget.name}" forever?`
+            : ''
+        }
+        body={
+          <div className="space-y-2">
+            <p>
+              The product and its photo will be permanently removed. Any
+              past sales of it will continue to exist in history but will
+              show as <em>(deleted product)</em>.
+            </p>
+            <p>This can't be undone.</p>
+          </div>
+        }
+        confirmLabel="Delete forever"
+        danger
+        onCancel={() => setHardDeleteTarget(null)}
+        onConfirm={async () => {
+          const p = hardDeleteTarget;
+          setHardDeleteTarget(null);
+          if (p) await hardDeleteProduct(p.id);
+        }}
+      />
     </DndContext>
   );
 }
@@ -547,10 +608,16 @@ function ProductCard({
   product,
   sold,
   onClick,
+  archivedMode,
+  onUnarchive,
+  onHardDelete,
 }: {
   product: Product;
   sold: number;
   onClick: () => void;
+  archivedMode?: boolean;
+  onUnarchive?: () => void;
+  onHardDelete?: () => void;
 }) {
   const {
     setNodeRef: setDragRef,
@@ -573,12 +640,14 @@ function ProductCard({
         {...attributes}
         {...listeners}
         onClick={onClick}
-        className={`tile p-2 ${isDragging ? 'opacity-40' : ''}`}
+        className={`tile p-2 ${isDragging ? 'opacity-40' : ''} ${
+          archivedMode ? 'opacity-70' : ''
+        }`}
       >
         <PhotoImg
           photo_id={product.photo_id}
           alt={product.name}
-          className="w-full aspect-square object-cover rounded-md"
+          className="w-full aspect-square object-cover rounded-md grayscale-[40%]"
         />
         <div className="mt-2 text-sm font-ui font-medium truncate">
           {product.name}
@@ -587,6 +656,32 @@ function ProductCard({
           <span>sold {sold}</span>
           <span>qty {product.quantity_on_hand}</span>
         </div>
+        {archivedMode && (
+          <div className="mt-2 flex gap-2 text-xs">
+            <button
+              type="button"
+              className="text-walnut/70 hover:text-walnut underline"
+              onClick={(e) => {
+                e.stopPropagation();
+                onUnarchive?.();
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              Unarchive
+            </button>
+            <button
+              type="button"
+              className="text-copper hover:text-copper-light underline ml-auto"
+              onClick={(e) => {
+                e.stopPropagation();
+                onHardDelete?.();
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              Delete forever
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

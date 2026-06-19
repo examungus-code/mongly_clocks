@@ -14,10 +14,13 @@ export interface CategoryNode extends Category {
   products: Product[];
 }
 
+export type TreeMode = 'active' | 'archived' | 'all';
+
 /** Build the full tree from flat rows. O(n) — fine even at thousands. */
 export function buildTree(
   categories: Category[],
-  products: Product[]
+  products: Product[],
+  mode: TreeMode = 'active'
 ): CategoryNode[] {
   const nodes = new Map<ID, CategoryNode>();
   categories.forEach((c) =>
@@ -34,7 +37,8 @@ export function buildTree(
   }
 
   for (const p of products) {
-    if (p.archived) continue;
+    if (mode === 'active' && p.archived) continue;
+    if (mode === 'archived' && !p.archived) continue;
     nodes.get(p.category_id)?.products.push(p);
   }
 
@@ -328,6 +332,71 @@ export async function archiveProduct(id: ID): Promise<void> {
 
 export async function unarchiveProduct(id: ID): Promise<void> {
   await db.products.update(id, { archived: false, updated_at: Date.now() });
+}
+
+/**
+ * Permanently delete a product and its photo. Sales rows in History/Sold
+ * that referenced this product render as "(deleted product)" afterward.
+ * Subtype links from other products/categories that pointed at this one
+ * are also cleaned up so they don't dangle.
+ */
+export async function hardDeleteProduct(id: ID): Promise<void> {
+  await db.transaction(
+    'rw',
+    [db.products, db.categories, db.photos],
+    async () => {
+      const product = await db.products.get(id);
+      if (!product) return;
+
+      if (product.photo_id) {
+        await db.photos.delete(product.photo_id);
+      }
+
+      // Strip any subtype_link entries pointing at this product, on both
+      // other products and categories — otherwise the resolver hands sales
+      // back a dead component id.
+      const allProducts = await db.products.toArray();
+      for (const p of allProducts) {
+        const links = p.subtype_links ?? {};
+        let changed = false;
+        const next: Record<string, ID> = {};
+        for (const [k, v] of Object.entries(links)) {
+          if (v === id) {
+            changed = true;
+            continue;
+          }
+          next[k] = v;
+        }
+        if (changed) {
+          await db.products.update(p.id, {
+            subtype_links: next,
+            updated_at: Date.now(),
+          });
+        }
+      }
+      const allCategories = await db.categories.toArray();
+      for (const c of allCategories) {
+        const links = c.subtype_links ?? {};
+        let changed = false;
+        const next: Record<string, ID> = {};
+        for (const [k, v] of Object.entries(links)) {
+          if (v === id) {
+            changed = true;
+            continue;
+          }
+          next[k] = v;
+        }
+        if (changed) {
+          await db.categories.update(c.id, {
+            subtype_links: next,
+            updated_at: Date.now(),
+          });
+        }
+      }
+
+      await db.products.delete(id);
+    }
+  );
 }
 
 /** Trim, drop empties, dedupe while preserving order. */
