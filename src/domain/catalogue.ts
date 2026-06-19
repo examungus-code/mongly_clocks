@@ -579,6 +579,178 @@ export async function resolveSubtypeConfigAsync(
   };
 }
 
+export interface MergeSource {
+  product_id: ID;
+  /** Size label this source's stock should become on the target. */
+  size_label: string;
+}
+
+/**
+ * Merge a set of "source" products into a single "target" product as
+ * separate-pool sizes. Each source's current quantity_on_hand becomes the
+ * target's stock for the source's size_label. The sources are then
+ * zeroed-out and archived; their historical sales rows stay intact and
+ * continue to reference them, so business analytics for past sales are
+ * preserved.
+ *
+ * The target absorbs its own current stock under `target_size_label`. If
+ * the target already has sizes, the new sizes are appended (and duplicate
+ * labels add into the existing pool rather than replacing it).
+ */
+export async function mergeProductsAsSizes(
+  target_id: ID,
+  target_size_label: string,
+  sources: MergeSource[]
+): Promise<void> {
+  const tLabel = target_size_label.trim();
+  if (!tLabel) {
+    throw new Error('Enter a size label for the current product.');
+  }
+  if (sources.length === 0) {
+    throw new Error('Pick at least one other product to merge.');
+  }
+  const allLabels = [tLabel, ...sources.map((s) => s.size_label.trim())];
+  const seen = new Set<string>();
+  for (const s of allLabels) {
+    if (!s) throw new Error('Every size label must be non-empty.');
+    if (seen.has(s)) throw new Error(`Duplicate size label: "${s}".`);
+    seen.add(s);
+  }
+
+  await db.transaction(
+    'rw',
+    [db.products, db.categories, db.adjustments],
+    async () => {
+      const target = await db.products.get(target_id);
+      if (!target) throw new Error('Target product not found.');
+
+      // Preserve the target's existing sizes (if any) plus stock per size.
+      const nextSizes: string[] = [...(target.sizes ?? [])];
+      const nextStock: Record<string, number> = { ...(target.size_stock ?? {}) };
+
+      function addToSize(label: string, qty: number) {
+        if (!nextSizes.includes(label)) nextSizes.push(label);
+        nextStock[label] = (nextStock[label] ?? 0) + qty;
+      }
+
+      // If the target had no sizes yet, fold its whole pool into the new
+      // target_size_label. If it already had sizes, the existing pools
+      // stay where they are (the new label is just an additional pool).
+      if ((target.sizes ?? []).length === 0) {
+        addToSize(tLabel, target.quantity_on_hand);
+      } else if (!nextSizes.includes(tLabel)) {
+        addToSize(tLabel, 0);
+      }
+
+      const now = Date.now();
+
+      // Walk sources: snapshot their qty, log a merge adjustment on the
+      // target, then zero-out and archive the source.
+      for (const s of sources) {
+        if (s.product_id === target_id) continue;
+        const sourceProduct = await db.products.get(s.product_id);
+        if (!sourceProduct) continue;
+        const moved = sourceProduct.quantity_on_hand;
+        const label = s.size_label.trim();
+
+        if (moved !== 0) {
+          await db.adjustments.add({
+            id: uuid(),
+            product_id: target.id,
+            delta: moved,
+            reason: 'manual_correction',
+            transaction_id: null,
+            size: label,
+            note: `Merged from "${sourceProduct.name}"`,
+            occurred_at: now,
+            created_at: now,
+          });
+        }
+        addToSize(label, moved);
+
+        if (moved !== 0) {
+          await db.adjustments.add({
+            id: uuid(),
+            product_id: sourceProduct.id,
+            delta: -moved,
+            reason: 'manual_correction',
+            transaction_id: null,
+            note: `Merged into "${target.name}"`,
+            occurred_at: now,
+            created_at: now,
+          });
+        }
+        await db.products.update(sourceProduct.id, {
+          quantity_on_hand: 0,
+          archived: true,
+          updated_at: now,
+        });
+      }
+
+      const newTotal = Object.values(nextStock).reduce((a, b) => a + b, 0);
+      await db.products.update(target.id, {
+        sizes: nextSizes,
+        size_stock: nextStock,
+        quantity_on_hand: newTotal,
+        updated_at: now,
+      });
+
+      // Strip any subtype_link entries on other products / categories that
+      // pointed at one of the merged sources — they'd now resolve to an
+      // archived product that won't be sold.
+      const sourceIds = new Set(sources.map((s) => s.product_id));
+      const allProducts = await db.products.toArray();
+      for (const p of allProducts) {
+        if (sourceIds.has(p.id) || p.id === target_id) continue;
+        const links = p.subtype_links ?? {};
+        let changed = false;
+        const next: Record<string, ID> = {};
+        for (const [k, v] of Object.entries(links)) {
+          if (sourceIds.has(v)) {
+            changed = true;
+            continue;
+          }
+          next[k] = v;
+        }
+        if (changed) {
+          await db.products.update(p.id, {
+            subtype_links: next,
+            updated_at: now,
+          });
+        }
+      }
+      const allCategories = await db.categories.toArray();
+      for (const c of allCategories) {
+        const links = c.subtype_links ?? {};
+        let changed = false;
+        const next: Record<string, ID> = {};
+        for (const [k, v] of Object.entries(links)) {
+          if (sourceIds.has(v)) {
+            changed = true;
+            continue;
+          }
+          next[k] = v;
+        }
+        if (changed) {
+          await db.categories.update(c.id, {
+            subtype_links: next,
+            updated_at: now,
+          });
+        }
+      }
+    }
+  );
+}
+
+/**
+ * Best-effort: extract a probable size label from a product name like
+ * "Ring Design A — Size 7" → "7", or "Bronze ring 9.5" → "9.5".
+ */
+export function suggestSizeFromName(name: string): string {
+  const m = name.match(/(\d+(?:\.\d+)?)\s*$/);
+  return m?.[1] ?? '';
+}
+
 export async function reorderProducts(
   category_id: ID,
   ordered_ids: ID[]

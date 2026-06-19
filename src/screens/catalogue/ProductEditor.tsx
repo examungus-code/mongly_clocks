@@ -14,6 +14,7 @@ import {
 import { recordAdjustment } from '../../domain/inventory';
 import { PhotoImg } from '../../components/PhotoImg';
 import { SubtypeEditor } from './SubtypeEditor';
+import { MergeIntoSizesDialog } from './MergeIntoSizesDialog';
 
 type Props =
   | {
@@ -40,6 +41,7 @@ export function ProductEditor(props: Props) {
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoCleared, setPhotoCleared] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
   // Subtypes: editable as a list of strings. Empty = no subtypes for this
   // product. There are no defaults — at sale time, when a product has
   // subtypes, the operator always has to pick one.
@@ -459,8 +461,8 @@ export function ProductEditor(props: Props) {
           </div>
         )}
 
-        <footer className="flex items-center justify-between pt-3 border-t border-brass/30">
-          <div>
+        <footer className="flex items-center justify-between pt-3 border-t border-brass/30 gap-2 flex-wrap">
+          <div className="flex gap-2 flex-wrap">
             {isEdit && (
               <button
                 type="button"
@@ -478,6 +480,16 @@ export function ProductEditor(props: Props) {
                 Archive
               </button>
             )}
+            {isEdit && (
+              <button
+                type="button"
+                className="btn-ghost text-sm"
+                onClick={() => setMergeOpen(true)}
+                title="Absorb other products as separate-pool sizes (e.g. ring sizes)"
+              >
+                Merge in as sizes…
+              </button>
+            )}
           </div>
           <div className="flex gap-2">
             <button type="button" className="btn-secondary" onClick={props.onClose}>
@@ -489,6 +501,16 @@ export function ProductEditor(props: Props) {
           </div>
         </footer>
       </form>
+      {isEdit && mergeOpen && (
+        <MergeIntoSizesDialog
+          target={props.product}
+          onClose={() => setMergeOpen(false)}
+          onMerged={() => {
+            setMergeOpen(false);
+            props.onSaved();
+          }}
+        />
+      )}
     </dialog>
   );
 }
