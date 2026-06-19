@@ -52,15 +52,53 @@ function loadGis(): Promise<void> {
   return gisLoaded;
 }
 
-let accessToken: string | null = null;
-let tokenExpiresAt = 0;
+// Persisted auth state. We keep the access token in localStorage so it
+// survives page reloads (and PWA service-worker swaps) within its ~1-hour
+// validity. We also remember the email of the connected account so future
+// token requests can pre-select it via the `hint` parameter — that's what
+// makes the account picker stop showing up after the first connection.
+const STORAGE_KEY = 'clockwork_drive_auth';
+
+interface PersistedAuth {
+  access_token: string;
+  expires_at: number; // ms epoch
+  email: string | null;
+}
+
+function loadAuth(): PersistedAuth | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as PersistedAuth;
+  } catch {
+    return null;
+  }
+}
+
+function saveAuth(auth: PersistedAuth | null) {
+  if (auth === null) localStorage.removeItem(STORAGE_KEY);
+  else localStorage.setItem(STORAGE_KEY, JSON.stringify(auth));
+}
+
+let cached: PersistedAuth | null = loadAuth();
 
 export function isConfigured(): boolean {
   return !!CLIENT_ID;
 }
 
 export function isAuthed(): boolean {
-  return !!accessToken && Date.now() < tokenExpiresAt;
+  return !!cached?.access_token && Date.now() < cached.expires_at;
+}
+
+/** Returns the connected Google email if we've successfully auth'd before. */
+export function connectedEmail(): string | null {
+  return cached?.email ?? null;
+}
+
+/** Wipe the cached auth — for "switch account" or "disconnect" affordances. */
+export function disconnect() {
+  cached = null;
+  saveAuth(null);
 }
 
 /** Request an access token, prompting the user if needed. */
@@ -70,28 +108,61 @@ export async function authenticate(): Promise<string> {
       'Drive sync not configured. Set VITE_GOOGLE_CLIENT_ID at build time.'
     );
   }
+  if (isAuthed()) return cached!.access_token;
   await loadGis();
   return new Promise((resolve, reject) => {
     const client = window.google!.accounts.oauth2.initTokenClient({
       client_id: CLIENT_ID!,
       scope: SCOPE,
-      callback: (resp) => {
+      // Hint tells Google to pre-select the previously connected account so
+      // the account picker doesn't reappear on every refresh.
+      hint: cached?.email ?? undefined,
+      callback: async (resp) => {
         if (resp.error || !resp.access_token) {
           reject(new Error(resp.error || 'No access token returned'));
           return;
         }
-        accessToken = resp.access_token;
+        const access_token = resp.access_token;
         // GIS tokens are typically valid for ~1 hour; refresh proactively.
-        tokenExpiresAt = Date.now() + 55 * 60 * 1000;
-        resolve(accessToken);
+        const expires_at = Date.now() + 55 * 60 * 1000;
+
+        // Resolve the user's email on first auth so we can hint with it on
+        // subsequent silent refreshes. The Drive `about` endpoint works
+        // with just the drive.file scope and returns user info without
+        // needing the broader profile/email scopes.
+        let email = cached?.email ?? null;
+        if (!email) {
+          try {
+            const aboutRes = await fetch(
+              `${DRIVE_API}/about?fields=user`,
+              { headers: { Authorization: `Bearer ${access_token}` } }
+            );
+            if (aboutRes.ok) {
+              const data = (await aboutRes.json()) as {
+                user?: { emailAddress?: string };
+              };
+              email = data.user?.emailAddress ?? null;
+            }
+          } catch {
+            /* email is a nice-to-have; failure shouldn't block sync */
+          }
+        }
+
+        cached = { access_token, expires_at, email };
+        saveAuth(cached);
+        resolve(access_token);
       },
     });
-    client.requestAccessToken({ prompt: isAuthed() ? '' : 'consent' });
+    // First-time = consent prompt (one time). Subsequent = silent ('' lets
+    // Google decide; combined with the hint above this is silent in nearly
+    // every case where she's still signed into that account).
+    const prompt = cached?.email ? '' : 'consent';
+    client.requestAccessToken({ prompt });
   });
 }
 
 async function ensureToken(): Promise<string> {
-  if (isAuthed()) return accessToken!;
+  if (isAuthed()) return cached!.access_token;
   return authenticate();
 }
 

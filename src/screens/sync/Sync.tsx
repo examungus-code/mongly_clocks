@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../../db/schema';
-import { authenticate, isAuthed, isConfigured } from '../../sync/drive-client';
+import {
+  authenticate,
+  connectedEmail,
+  disconnect,
+  isAuthed,
+  isConfigured,
+} from '../../sync/drive-client';
 import { pushToDrive, type PushProgress } from '../../sync/push';
 import {
   listDataVersions,
@@ -25,6 +31,7 @@ export function Sync() {
     null
   );
   const [authed, setAuthed] = useState(isAuthed());
+  const [email, setEmail] = useState<string | null>(connectedEmail());
   const [versions, setVersions] = useState<DataVersion[] | null>(null);
   const [versionsLoading, setVersionsLoading] = useState(false);
 
@@ -36,9 +43,18 @@ export function Sync() {
     try {
       await authenticate();
       setAuthed(true);
+      setEmail(connectedEmail());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
+  }
+
+  function handleDisconnect() {
+    if (!confirm('Disconnect from Google? You can reconnect later.')) return;
+    disconnect();
+    setAuthed(false);
+    setEmail(null);
+    setVersions(null);
   }
 
   async function refreshVersions() {
@@ -129,6 +145,20 @@ export function Sync() {
             </button>
           )}
         </div>
+        {email && (
+          <div className="flex items-center justify-between text-xs text-walnut/70 mt-2 pt-2 border-t border-brass/20">
+            <span>
+              Connected as <strong>{email}</strong>
+            </span>
+            <button
+              type="button"
+              className="text-copper hover:underline"
+              onClick={handleDisconnect}
+            >
+              Disconnect
+            </button>
+          </div>
+        )}
       </section>
 
       <section className="grid grid-cols-1 sm:grid-cols-2 gap-3">
