@@ -6,7 +6,9 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Product, type ID } from '../../db/schema';
 import {
   createProduct,
+  parseSizesInput,
   resolveSubtypeConfig,
+  sizesToInput,
   updateProduct,
 } from '../../domain/catalogue';
 import { recordAdjustment } from '../../domain/inventory';
@@ -46,6 +48,11 @@ export function ProductEditor(props: Props) {
   // and removals are reflected here in the rename/delete handlers below.
   const [subtypeLinks, setSubtypeLinks] = useState<Record<string, ID>>(
     existing?.subtype_links ?? {}
+  );
+  // Sizes: separate-pool variant axis (rings). Editable as a comma-separated
+  // string for ease of bulk entry like "5, 6, 7, 8, 9, 10".
+  const [sizesText, setSizesText] = useState<string>(
+    sizesToInput(existing?.sizes ?? [])
   );
 
   // Catalogue of all other products, for the "links to" dropdown.
@@ -116,8 +123,32 @@ export function ProductEditor(props: Props) {
     if (subtypeLinks[s]) effectiveLinks[s] = subtypeLinks[s];
   }
 
+  // Parse sizes input on every render so save-time validation matches what
+  // the operator sees in the editor.
+  const cleanSizes = parseSizesInput(sizesText);
+
+  // When sizes are being added or removed mid-edit, warn before save if
+  // we're about to drop stock from a size that's non-zero.
+  function getDroppedSizesWithStock(): string[] {
+    if (props.mode !== 'edit') return [];
+    const prev = props.product.sizes ?? [];
+    const prevStock = props.product.size_stock ?? {};
+    return prev.filter(
+      (s) => !cleanSizes.includes(s) && (prevStock[s] ?? 0) !== 0
+    );
+  }
+
   async function handleSave() {
     if (!name.trim()) return;
+    const dropped = getDroppedSizesWithStock();
+    if (dropped.length > 0) {
+      const proceed = confirm(
+        `Removing these sizes will discard their on-hand stock: ${dropped.join(
+          ', '
+        )}. Continue?`
+      );
+      if (!proceed) return;
+    }
     setSaving(true);
     try {
       if (props.mode === 'create') {
@@ -130,6 +161,7 @@ export function ProductEditor(props: Props) {
           photo_file: photoFile,
           subtypes: cleanSubtypes,
           subtype_links: effectiveLinks,
+          sizes: cleanSizes,
         });
       } else {
         await updateProduct(props.product.id, {
@@ -138,6 +170,7 @@ export function ProductEditor(props: Props) {
           photo_file: photoCleared ? null : (photoFile ?? undefined),
           subtypes: cleanSubtypes,
           subtype_links: effectiveLinks,
+          sizes: cleanSizes,
         });
       }
       props.onSaved();
@@ -146,7 +179,11 @@ export function ProductEditor(props: Props) {
     }
   }
 
-  async function handleAdjust(delta: number, reason: 'restocked' | 'lost' | 'broken' | 'manual_correction') {
+  async function handleAdjust(
+    delta: number,
+    reason: 'restocked' | 'lost' | 'broken' | 'manual_correction',
+    size: string | null = null
+  ) {
     if (!existing) return;
     const note =
       reason === 'manual_correction'
@@ -156,6 +193,7 @@ export function ProductEditor(props: Props) {
       product_id: existing.id,
       delta,
       reason,
+      size,
       note,
     });
   }
@@ -224,7 +262,7 @@ export function ProductEditor(props: Props) {
                 onChange={(e) => setDescription(e.target.value)}
               />
             </div>
-            {!isEdit && (
+            {!isEdit && cleanSizes.length === 0 && (
               <div>
                 <label className="label">Initial quantity</label>
                 <input
@@ -286,61 +324,131 @@ export function ProductEditor(props: Props) {
           )}
         </div>
 
+        <div className="border-t border-brass/30 pt-3 space-y-2">
+          <h4 className="font-display text-base">Sizes (optional)</h4>
+          <p className="text-xs text-walnut/60">
+            For products with discrete size variants like rings, where each
+            size is a distinct piece of stock. Enter as a comma-separated
+            list, e.g. <code>5, 6, 7, 8, 9, 10</code>. Leave empty for an
+            unsized product (the regular shared-pool behavior).
+          </p>
+          <input
+            className="input"
+            placeholder="e.g. 5, 6, 7, 8, 9, 10"
+            value={sizesText}
+            onChange={(e) => setSizesText(e.target.value)}
+          />
+          {cleanSizes.length > 0 && (
+            <p className="text-xs text-walnut/50">
+              Parsed sizes: {cleanSizes.join(' · ')}
+            </p>
+          )}
+        </div>
+
         {isEdit && existing && (
           <div className="border-t border-brass/30 pt-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <h4 className="font-display text-base">
-                Inventory · {existing.quantity_on_hand} on hand
-              </h4>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => {
-                  const n = parseInt(
-                    prompt('How many did you make?') ?? '0',
-                    10
+            <h4 className="font-display text-base">
+              Inventory · {existing.quantity_on_hand} on hand
+            </h4>
+            {(existing.sizes ?? []).length === 0 ? (
+              <>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => {
+                      const n = parseInt(
+                        prompt('How many did you make?') ?? '0',
+                        10
+                      );
+                      if (n > 0) handleAdjust(n, 'restocked');
+                    }}
+                  >
+                    + Restock
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => handleAdjust(-1, 'lost')}
+                  >
+                    − Lost
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => handleAdjust(-1, 'broken')}
+                  >
+                    − Broken
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => {
+                      const delta = parseInt(
+                        prompt('Correction delta (e.g. -2 or 3)') ?? '',
+                        10
+                      );
+                      if (!isNaN(delta) && delta !== 0)
+                        handleAdjust(delta, 'manual_correction');
+                    }}
+                  >
+                    ± Manual correction
+                  </button>
+                </div>
+              </>
+            ) : (
+              <ul className="space-y-1">
+                {existing.sizes.map((s) => {
+                  const stock = existing.size_stock?.[s] ?? 0;
+                  return (
+                    <li
+                      key={s}
+                      className="grid grid-cols-[80px_60px_1fr] sm:grid-cols-[120px_60px_1fr] gap-2 items-center"
+                    >
+                      <span className="font-ui text-sm">Size {s}</span>
+                      <span className="text-sm text-walnut/70 tabular-nums">
+                        {stock}
+                      </span>
+                      <div className="flex flex-wrap gap-1 justify-end">
+                        <button
+                          type="button"
+                          className="btn-secondary !min-h-0 !py-1 !px-2 text-xs"
+                          onClick={() => {
+                            const n = parseInt(
+                              prompt(`How many size ${s} did you make?`) ?? '0',
+                              10
+                            );
+                            if (n > 0) handleAdjust(n, 'restocked', s);
+                          }}
+                        >
+                          + Restock
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-secondary !min-h-0 !py-1 !px-2 text-xs"
+                          onClick={() => handleAdjust(-1, 'lost', s)}
+                        >
+                          − Lost
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-secondary !min-h-0 !py-1 !px-2 text-xs"
+                          onClick={() => handleAdjust(-1, 'broken', s)}
+                        >
+                          − Broken
+                        </button>
+                      </div>
+                    </li>
                   );
-                  if (n > 0) handleAdjust(n, 'restocked');
-                }}
-              >
-                + Restock
-              </button>
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => handleAdjust(-1, 'lost')}
-              >
-                − Lost
-              </button>
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => handleAdjust(-1, 'broken')}
-              >
-                − Broken
-              </button>
-              <button
-                type="button"
-                className="btn-ghost"
-                onClick={() => {
-                  const delta = parseInt(
-                    prompt('Correction delta (e.g. -2 or 3)') ?? '',
-                    10
-                  );
-                  if (!isNaN(delta) && delta !== 0)
-                    handleAdjust(delta, 'manual_correction');
-                }}
-              >
-                ± Manual correction
-              </button>
-            </div>
+                })}
+              </ul>
+            )}
             {recentAdjustments && recentAdjustments.length > 0 && (
               <ul className="text-xs text-walnut/70 mt-2 space-y-0.5">
                 {recentAdjustments.map((a) => (
                   <li key={a.id}>
                     {new Date(a.occurred_at).toLocaleDateString()} · {a.reason}{' '}
+                    {a.size && `· size ${a.size} `}
                     · {a.delta > 0 ? '+' : ''}
                     {a.delta}
                     {a.note ? ` · ${a.note}` : ''}

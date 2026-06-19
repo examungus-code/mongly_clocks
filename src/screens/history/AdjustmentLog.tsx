@@ -207,6 +207,9 @@ export function AdjustmentLog() {
                         subtype && <span className="text-walnut/60"> · {subtype}</span>
                       )
                     ) : null}
+                    {a.size && (
+                      <span className="text-walnut/60"> · size {a.size}</span>
+                    )}
                   </div>
                   <div className="text-xs text-walnut/60">
                     {fmtDateTime(a.occurred_at)} · {a.reason}

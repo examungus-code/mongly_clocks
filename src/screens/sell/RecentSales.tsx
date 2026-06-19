@@ -80,6 +80,9 @@ export function RecentSales() {
                       {l.subtype && (
                         <span className="text-walnut/60"> · {l.subtype}</span>
                       )}
+                      {l.size && (
+                        <span className="text-walnut/60"> · size {l.size}</span>
+                      )}
                     </li>
                   ))}
                 </ul>

@@ -12,6 +12,7 @@ import { v4 as uuid } from 'uuid';
 import {
   db,
   type ID,
+  type Product,
   type Transaction,
   type TransactionLineItem,
 } from '../db/schema';
@@ -22,6 +23,7 @@ export interface SaleLine {
   product_name: string; // snapshot for display
   quantity: number;
   subtype: string | null; // null when the product has no subtypes defined
+  size: string | null; // null when the product has no sizes defined
 }
 
 export interface CompleteTransactionInput {
@@ -52,23 +54,40 @@ export async function deleteTransaction(tx_id: ID): Promise<void> {
         .equals(tx_id)
         .toArray();
 
-      // Aggregate per-product reversal: negate the recorded delta. (A 'sold'
-      // adjustment is -N, so reversal is +N. A 'sold_component' adjustment is
-      // -1, so reversal is +1.)
-      const restorePerProduct = new Map<ID, number>();
+      // Per-product restoration with optional per-size restoration too.
+      // Each adjustment can specify a size; we sum reversals per (product,
+      // size) so the right pool gets unwound.
+      const totalsPerProduct = new Map<ID, number>();
+      const perSize = new Map<ID, Map<string, number>>();
       for (const adj of adjustments) {
-        restorePerProduct.set(
+        totalsPerProduct.set(
           adj.product_id,
-          (restorePerProduct.get(adj.product_id) ?? 0) + -adj.delta
+          (totalsPerProduct.get(adj.product_id) ?? 0) + -adj.delta
         );
+        if (adj.size) {
+          const m = perSize.get(adj.product_id) ?? new Map<string, number>();
+          m.set(adj.size, (m.get(adj.size) ?? 0) + -adj.delta);
+          perSize.set(adj.product_id, m);
+        }
       }
-      for (const [product_id, delta] of restorePerProduct) {
+      for (const [product_id, delta] of totalsPerProduct) {
         const product = await db.products.get(product_id);
         if (!product) continue;
-        await db.products.update(product_id, {
+        const patch: Partial<Product> = {
           quantity_on_hand: product.quantity_on_hand + delta,
           updated_at: Date.now(),
-        });
+        };
+        const sizeReversals = perSize.get(product_id);
+        if (sizeReversals && (product.sizes ?? []).length > 0) {
+          const nextStock = { ...(product.size_stock ?? {}) };
+          for (const [size, sd] of sizeReversals) {
+            if (nextStock[size] !== undefined) {
+              nextStock[size] += sd;
+            }
+          }
+          patch.size_stock = nextStock;
+        }
+        await db.products.update(product_id, patch);
       }
 
       const lineIds = await db.line_items
@@ -106,6 +125,7 @@ export async function completeTransaction(
     product_id: line.product_id,
     quantity: line.quantity,
     subtype: line.subtype,
+    size: line.size,
   }));
 
   await db.transaction(
@@ -128,7 +148,8 @@ export async function completeTransaction(
         const product = await db.products.get(line.product_id);
         if (!product) throw new Error(`product ${line.product_id} missing`);
 
-        // Main sold adjustment for the product itself.
+        // Main sold adjustment for the product itself. Carries the size
+        // for sized products so the per-size pool also decrements.
         await db.adjustments.add({
           id: uuid(),
           product_id: line.product_id,
@@ -136,14 +157,22 @@ export async function completeTransaction(
           reason: 'sold',
           transaction_id: txId,
           line_item_id: lineRow.id,
+          size: line.size,
           note: '',
           occurred_at: now,
           created_at: Date.now(),
         });
-        await db.products.update(line.product_id, {
+        const productPatch: Partial<Product> = {
           quantity_on_hand: product.quantity_on_hand - line.quantity,
           updated_at: Date.now(),
-        });
+        };
+        if (line.size && (product.sizes ?? []).includes(line.size)) {
+          const nextStock = { ...(product.size_stock ?? {}) };
+          nextStock[line.size] =
+            (nextStock[line.size] ?? 0) - line.quantity;
+          productPatch.size_stock = nextStock;
+        }
+        await db.products.update(line.product_id, productPatch);
 
         // Subtype component link: decrement the linked product too. Hidden
         // from the inventory log but still counts toward the linked

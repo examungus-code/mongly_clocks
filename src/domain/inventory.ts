@@ -1,6 +1,6 @@
 // Inventory adjustments — every quantity change goes through here so the
 // adjustments log stays the source of truth and Product.quantity_on_hand
-// stays an honest cache.
+// (plus size_stock for sized products) stays an honest cache.
 
 import { v4 as uuid } from 'uuid';
 import {
@@ -17,6 +17,11 @@ export interface AdjustmentInput {
   note?: string;
   transaction_id?: ID | null;
   occurred_at?: number;
+  /**
+   * For sized products, which size pool this adjustment targets.
+   * Required if the product has sizes; ignored otherwise.
+   */
+  size?: string | null;
 }
 
 /** Write an adjustment and update the cached quantity in one transaction. */
@@ -30,6 +35,7 @@ export async function recordAdjustment(
     delta: input.delta,
     reason: input.reason,
     transaction_id: input.transaction_id ?? null,
+    size: input.size ?? null,
     note: input.note ?? '',
     occurred_at: input.occurred_at ?? now,
     created_at: now,
@@ -39,10 +45,16 @@ export async function recordAdjustment(
     await db.adjustments.add(row);
     const product = await db.products.get(input.product_id);
     if (!product) throw new Error(`product ${input.product_id} not found`);
-    await db.products.update(input.product_id, {
-      quantity_on_hand: product.quantity_on_hand + input.delta,
-      updated_at: now,
-    });
+    const patch: Partial<typeof product> = { updated_at: now };
+    patch.quantity_on_hand = product.quantity_on_hand + input.delta;
+    // Per-size pool, if applicable. Defensive against missing size_stock
+    // for legacy rows: rebuild from scratch with the requested key.
+    if (input.size && (product.sizes ?? []).includes(input.size)) {
+      const nextStock = { ...(product.size_stock ?? {}) };
+      nextStock[input.size] = (nextStock[input.size] ?? 0) + input.delta;
+      patch.size_stock = nextStock;
+    }
+    await db.products.update(input.product_id, patch);
   });
 
   return row;
@@ -63,17 +75,22 @@ export async function deleteAdjustment(adjustment_id: string): Promise<void> {
     const product = await db.products.get(adj.product_id);
     await db.adjustments.delete(adjustment_id);
     if (product) {
-      await db.products.update(adj.product_id, {
-        quantity_on_hand: product.quantity_on_hand - adj.delta,
-        updated_at: Date.now(),
-      });
+      const patch: Partial<typeof product> = { updated_at: Date.now() };
+      patch.quantity_on_hand = product.quantity_on_hand - adj.delta;
+      if (adj.size && (product.sizes ?? []).includes(adj.size)) {
+        const nextStock = { ...(product.size_stock ?? {}) };
+        nextStock[adj.size] = (nextStock[adj.size] ?? 0) - adj.delta;
+        patch.size_stock = nextStock;
+      }
+      await db.products.update(adj.product_id, patch);
     }
   });
 }
 
 /**
- * Recompute Product.quantity_on_hand from scratch by summing the adjustments
- * log. Run after a Drive Pull or whenever the cache is suspect.
+ * Recompute Product.quantity_on_hand (and size_stock for sized products)
+ * from scratch by summing the adjustments log. Run after a Drive Pull or
+ * whenever the cache is suspect.
  */
 export async function recomputeAllQuantities(): Promise<void> {
   await db.transaction(
@@ -86,13 +103,29 @@ export async function recomputeAllQuantities(): Promise<void> {
           .where('product_id')
           .equals(product.id)
           .toArray();
+
         const total = adjustments.reduce((sum, a) => sum + a.delta, 0);
-        if (total !== product.quantity_on_hand) {
-          await db.products.update(product.id, {
-            quantity_on_hand: total,
-            updated_at: Date.now(),
-          });
+        const patch: Partial<typeof product> = { updated_at: Date.now() };
+
+        if ((product.sizes ?? []).length > 0) {
+          // Sum per size; sizes with no adjustments get zero.
+          const nextStock: Record<string, number> = {};
+          for (const s of product.sizes) nextStock[s] = 0;
+          for (const a of adjustments) {
+            if (a.size && nextStock[a.size] !== undefined) {
+              nextStock[a.size] += a.delta;
+            }
+          }
+          patch.size_stock = nextStock;
+          patch.quantity_on_hand = Object.values(nextStock).reduce(
+            (sum, v) => sum + v,
+            0
+          );
+        } else {
+          patch.quantity_on_hand = total;
         }
+
+        await db.products.update(product.id, patch);
       }
     }
   );

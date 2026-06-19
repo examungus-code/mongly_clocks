@@ -224,6 +224,11 @@ export interface NewProductInput {
   photo_file: File | null;
   subtypes: string[];
   subtype_links: Record<string, ID>;
+  // Optional sized-product axis. When non-empty, the product is treated as
+  // a separate-pool variant set — each size has its own stock counter,
+  // and `initial_quantity` is ignored (she restocks each size separately
+  // after creation).
+  sizes: string[];
 }
 
 export async function createProduct(input: NewProductInput): Promise<ID> {
@@ -244,6 +249,12 @@ export async function createProduct(input: NewProductInput): Promise<ID> {
 
   await db.transaction('rw', [db.products, db.adjustments], async () => {
     const cleanedSubtypes = normalizeSubtypes(input.subtypes);
+    const cleanedSizes = normalizeSizes(input.sizes);
+    // Sized products start each size at 0 — she restocks per size after
+    // creation. The unsized fallback path keeps using initial_quantity.
+    const sizeStock: Record<string, number> = {};
+    for (const s of cleanedSizes) sizeStock[s] = 0;
+
     await db.products.add({
       id,
       category_id: input.category_id,
@@ -255,11 +266,13 @@ export async function createProduct(input: NewProductInput): Promise<ID> {
       archived: false,
       subtypes: cleanedSubtypes,
       subtype_links: pruneLinks(input.subtype_links, cleanedSubtypes),
+      sizes: cleanedSizes,
+      size_stock: sizeStock,
       created_at: now,
       updated_at: now,
     });
 
-    if (input.initial_quantity > 0) {
+    if (cleanedSizes.length === 0 && input.initial_quantity > 0) {
       await db.adjustments.add({
         id: uuid(),
         product_id: id,
@@ -284,6 +297,12 @@ export interface UpdateProductInput {
   category_id?: ID;
   subtypes?: string[];
   subtype_links?: Record<string, ID>;
+  /**
+   * Pass the full new sizes list to update. New sizes get a zero entry in
+   * size_stock; removed sizes have their stock dropped (caller is
+   * responsible for warning the user if non-zero). Order is preserved.
+   */
+  sizes?: string[];
 }
 
 export async function updateProduct(
@@ -306,6 +325,27 @@ export async function updateProduct(
     // to the existing product's subtypes.
     const subs = patch.subtypes ?? existing.subtypes ?? [];
     patch.subtype_links = pruneLinks(input.subtype_links, subs);
+  }
+  if (input.sizes !== undefined) {
+    const cleaned = normalizeSizes(input.sizes);
+    const existingStock = existing.size_stock ?? {};
+    const nextStock: Record<string, number> = {};
+    // Preserve any existing stock for sizes that remain; default zero for
+    // new sizes. Removed sizes silently drop their stock — the UI confirms
+    // this with the operator before calling update.
+    for (const s of cleaned) {
+      nextStock[s] = existingStock[s] ?? 0;
+    }
+    patch.sizes = cleaned;
+    patch.size_stock = nextStock;
+    // Recompute the cached total: if any sizes are defined, total =
+    // sum(size_stock); otherwise leave the existing single-pool count alone.
+    if (cleaned.length > 0) {
+      patch.quantity_on_hand = Object.values(nextStock).reduce(
+        (a, b) => a + b,
+        0
+      );
+    }
   }
 
   await db.transaction('rw', [db.products, db.photos], async () => {
@@ -399,6 +439,30 @@ export async function hardDeleteProduct(id: ID): Promise<void> {
   );
 }
 
+/** Parse a comma- or whitespace-separated size string into a clean array. */
+export function parseSizesInput(raw: string): string[] {
+  return normalizeSizes(raw.split(/[,\n]/));
+}
+
+/** Sizes display: a single comma+space joined string for the editor input. */
+export function sizesToInput(sizes: string[]): string {
+  return sizes.join(', ');
+}
+
+/** Mirror of normalizeSubtypes but for sizes. */
+function normalizeSizes(sizes: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of sizes) {
+    const name = raw.trim();
+    if (!name) continue;
+    if (seen.has(name)) continue;
+    seen.add(name);
+    out.push(name);
+  }
+  return out;
+}
+
 /** Trim, drop empties, dedupe while preserving order. */
 function normalizeSubtypes(subtypes: string[]): string[] {
   const seen = new Set<string>();
@@ -426,12 +490,14 @@ function pruneLinks(
   return out;
 }
 
-/** Use everywhere the UI reads a product, to handle pre-v3 rows missing fields. */
+/** Use everywhere the UI reads a product, to handle pre-v7 rows missing fields. */
 export function withSubtypeDefaults(p: Product): Product {
   return {
     ...p,
     subtypes: p.subtypes ?? [],
     subtype_links: p.subtype_links ?? {},
+    sizes: p.sizes ?? [],
+    size_stock: p.size_stock ?? {},
   };
 }
 

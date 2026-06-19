@@ -33,10 +33,22 @@ export interface Product {
   category_id: ID;
   name: string;
   description: string;
-  quantity_on_hand: number; // cache: sum of adjustments
+  // Cached total. When `sizes` is empty, this is the single stock pool —
+  // mutated by every sold/restock/lost/broken/manual adjustment. When
+  // `sizes` is non-empty, this is the sum of size_stock values, kept in
+  // sync with every per-size adjustment.
+  quantity_on_hand: number;
   photo_id: ID | null;
   sort_order: number;
   archived: boolean;
+  // Sizes are a *separate-pool* variant axis (specifically built for ring
+  // sizes, where a size-7 ring is not interchangeable with a size-8 one).
+  // - When `sizes` is empty: legacy behavior, one shared pool.
+  // - When `sizes` is non-empty: each entry is a distinct stock pool with
+  //   its own count in `size_stock`. Sales, restock, lost, broken, and
+  //   manual adjustments all target one specific size.
+  sizes: string[];
+  size_stock: Record<string, number>;
   // Subtypes are optional sale-time variants of a product (e.g. metal: silver
   // / gold / copper). They are *labels* in this model — they don't split the
   // qty pool. If subtypes is empty, no selector is shown at sale time. If
@@ -74,6 +86,10 @@ export interface InventoryAdjustment {
   // with pre-v3.1 data; lookups gracefully fall back to (transaction_id +
   // product_id) matching when this is missing.
   line_item_id?: ID;
+  // For sized products, which size pool this adjustment moved. Null/absent
+  // for products without sizes and for sold_component adjustments
+  // (components are not sized).
+  size?: string | null;
   note: string;
   occurred_at: number;
   created_at: number;
@@ -95,6 +111,9 @@ export interface TransactionLineItem {
   // Snapshot of the subtype selected at sale time. Stored as a string (not an
   // ID) so renaming a subtype later doesn't rewrite history.
   subtype: string | null;
+  // Snapshot of the size selected at sale time, when the product has sizes.
+  // Null for unsized products and for pre-v7 line items.
+  size?: string | null;
 }
 
 export interface Festival {
@@ -223,4 +242,8 @@ export const db = new ClockworkDB();
 //     inherit the closest ancestor category's config when they don't
 //     define their own. Older clients miss the inheritance and would skip
 //     component decrements at sale time — refuse pull.
-export const SCHEMA_VERSION = 6;
+// v7: Product gains sizes + size_stock (separate-pool variant axis,
+//     specifically for ring sizes). TransactionLineItem.size and
+//     InventoryAdjustment.size snapshot the size each transaction touched.
+//     Older clients can't read or honor per-size pools — refuse pull.
+export const SCHEMA_VERSION = 7;

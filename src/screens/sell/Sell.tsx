@@ -117,7 +117,11 @@ export function Sell() {
     );
   }
 
-  async function sellNow(product: Product, subtype: string | null) {
+  async function sellNow(
+    product: Product,
+    subtype: string | null,
+    size: string | null
+  ) {
     try {
       await completeTransaction({
         lines: [
@@ -126,11 +130,14 @@ export function Sell() {
             product_name: product.name,
             quantity: 1,
             subtype,
+            size,
           },
         ],
         festival_id: session?.festival_id ?? null,
       });
-      showToast(product.name + (subtype ? ` · ${subtype}` : ''));
+      const tag =
+        (subtype ? ` · ${subtype}` : '') + (size ? ` · ${size}` : '');
+      showToast(product.name + tag);
       // Optional jump-to-root after a sale, controlled by a settings flag.
       if (prefs?.return_to_top_after_sale) {
         setCwd(null);
@@ -145,14 +152,16 @@ export function Sell() {
 
   function handleTileTap(product: Product) {
     // Effective subtype config = product's own if defined, else inherited from
-    // the closest category ancestor that defines subtypes. When subtypes
-    // exist, the operator always picks — there are no defaults.
+    // the closest category ancestor that defines subtypes. Sizes are
+    // product-only (no inheritance). If either dimension exists, open the
+    // variant picker.
     const cfg = resolveSubtypeConfig(product, categoryById);
-    if (cfg.subtypes.length > 0) {
+    const hasSizes = (product.sizes ?? []).length > 0;
+    if (cfg.subtypes.length > 0 || hasSizes) {
       setPickingSubtypeFor(product);
       return;
     }
-    void sellNow(product, null);
+    void sellNow(product, null, null);
   }
 
   function showToast(name: string) {
@@ -310,11 +319,12 @@ export function Sell() {
         <SubtypePicker
           product={pickingSubtypeFor}
           subtypes={resolveSubtypeConfig(pickingSubtypeFor, categoryById).subtypes}
+          sizes={pickingSubtypeFor.sizes ?? []}
           onCancel={() => setPickingSubtypeFor(null)}
-          onPick={async (subtype) => {
+          onPick={async (subtype, size) => {
             const p = pickingSubtypeFor;
             setPickingSubtypeFor(null);
-            await sellNow(p, subtype);
+            await sellNow(p, subtype, size);
           }}
         />
       )}
