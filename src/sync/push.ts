@@ -1,10 +1,13 @@
-// Push local data to Drive. Overwrites the cloud copy entirely.
+// Push local data to Drive. NON-DESTRUCTIVE: every push creates a new
+// timestamped data file (data-YYYYMMDD-HHMMSS.json) and never deletes the
+// previous one. Photos are never deleted either, even if they're not
+// referenced by the current snapshot — they might still be referenced by
+// an older version we want to be able to roll back to.
 
 import { db, SCHEMA_VERSION } from '../db/schema';
 import {
+  buildDataFilename,
   createFolder,
-  DATA_FILE,
-  deleteFile,
   findFileById,
   findFileByName,
   FOLDER_NAME,
@@ -21,7 +24,6 @@ export interface PushProgress {
     | 'finding-folder'
     | 'uploading-data'
     | 'uploading-photos'
-    | 'cleaning-up'
     | 'done';
   message: string;
   photo_index?: number;
@@ -47,21 +49,26 @@ export async function pushToDrive(
     photosFolder = await createFolder(PHOTOS_FOLDER, folder.id);
   }
 
-  // 3. Upload data.json (replace if present)
-  onProgress({ stage: 'uploading-data', message: 'Uploading data.json…' });
+  // 3. Upload a NEW versioned data file (never overwrites a previous one).
+  const dataFilename = buildDataFilename();
+  onProgress({
+    stage: 'uploading-data',
+    message: `Uploading ${dataFilename}…`,
+  });
   const dataBlob = new Blob([JSON.stringify(snapshot)], {
     type: 'application/json',
   });
-  const existingData = await findFileByName(DATA_FILE, folder.id);
-  await uploadFile(DATA_FILE, folder.id, dataBlob, existingData?.id);
+  await uploadFile(dataFilename, folder.id, dataBlob);
 
-  // 4. Upload meta.json
+  // 4. Update meta.json with a pointer to the latest version. Old versions
+  //    remain on Drive untouched.
   const metaBlob = new Blob(
     [
       JSON.stringify({
         schema_version: SCHEMA_VERSION,
         last_modified: Date.now(),
         device_label: deviceLabel,
+        latest_data_file: dataFilename,
       }),
     ],
     { type: 'application/json' }
@@ -69,7 +76,9 @@ export async function pushToDrive(
   const existingMeta = await findFileByName(META_FILE, folder.id);
   await uploadFile(META_FILE, folder.id, metaBlob, existingMeta?.id);
 
-  // 5. Sync photos: upload any local photo not present in Drive folder by id+ext
+  // 5. Upload any local photos that aren't on Drive yet. We NEVER delete
+  //    remote photos — they may still be referenced by older versioned
+  //    snapshots that the operator might want to restore.
   const localPhotos = await db.photos.toArray();
   const remotePhotos = await listChildren(photosFolder.id);
   const remoteByName = new Map(remotePhotos.map((f) => [f.name, f]));
@@ -81,12 +90,10 @@ export async function pushToDrive(
     photo_total: localPhotos.length,
   });
 
-  const expectedNames = new Set<string>();
   for (let i = 0; i < localPhotos.length; i++) {
     const photo = localPhotos[i];
     const ext = deriveExt(photo.file);
     const name = `${photo.id}${ext}`;
-    expectedNames.add(name);
     if (!remoteByName.has(name)) {
       await uploadFile(name, photosFolder.id, photo.file);
     }
@@ -98,15 +105,7 @@ export async function pushToDrive(
     });
   }
 
-  // 6. Delete remote photos not referenced anymore
-  onProgress({ stage: 'cleaning-up', message: 'Removing stale photos…' });
-  for (const remote of remotePhotos) {
-    if (!expectedNames.has(remote.name)) {
-      await deleteFile(remote.id);
-    }
-  }
-
-  // 7. Update local sync metadata
+  // 6. Update local sync metadata
   await db.sync_meta.update('sync', {
     last_push_at: Date.now(),
     last_cloud_modified_at: Date.now(),

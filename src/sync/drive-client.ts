@@ -240,6 +240,29 @@ export async function deleteFile(id: string): Promise<void> {
 }
 
 export const FOLDER_NAME = 'Clockwork Traveler';
-export const DATA_FILE = 'data.json';
+/** Legacy single-file name; kept for backward-compat reads. */
+export const LEGACY_DATA_FILE = 'data.json';
+/** Prefix for the new versioned data files. Format: `data-YYYYMMDD-HHMMSS.json`. */
+export const DATA_FILE_PREFIX = 'data-';
+export const DATA_FILE_SUFFIX = '.json';
 export const META_FILE = 'meta.json';
 export const PHOTOS_FOLDER = 'photos';
+
+/** Build a versioned data filename for `now` in UTC. */
+export function buildDataFilename(now: Date = new Date()): string {
+  const p = (n: number, w = 2) => String(n).padStart(w, '0');
+  const ymd = `${now.getUTCFullYear()}${p(now.getUTCMonth() + 1)}${p(now.getUTCDate())}`;
+  const hms = `${p(now.getUTCHours())}${p(now.getUTCMinutes())}${p(now.getUTCSeconds())}`;
+  return `${DATA_FILE_PREFIX}${ymd}-${hms}${DATA_FILE_SUFFIX}`;
+}
+
+/** Recognize and parse a versioned data filename → ms epoch, or null. */
+export function parseDataFilename(name: string): number | null {
+  if (!name.startsWith(DATA_FILE_PREFIX) || !name.endsWith(DATA_FILE_SUFFIX))
+    return null;
+  const core = name.slice(DATA_FILE_PREFIX.length, -DATA_FILE_SUFFIX.length);
+  const m = core.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/);
+  if (!m) return null;
+  const [, y, mo, d, h, mi, s] = m;
+  return Date.UTC(+y, +mo - 1, +d, +h, +mi, +s);
+}

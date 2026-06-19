@@ -1,15 +1,22 @@
 // Pull cloud data from Drive into the local DB, replacing everything.
+//
+// By default this pulls the most recent versioned snapshot (data-YYYYMMDD-
+// HHMMSS.json) found in the Drive folder. The caller can pass an explicit
+// file id (e.g. from the "older versions" UI on the Sync page) to restore a
+// specific prior snapshot instead.
 
 import { db, SCHEMA_VERSION } from '../db/schema';
 import {
-  DATA_FILE,
   downloadFile,
   findFileById,
   findFileByName,
   FOLDER_NAME,
+  LEGACY_DATA_FILE,
   listChildren,
   META_FILE,
+  parseDataFilename,
   PHOTOS_FOLDER,
+  type DriveFile,
 } from './drive-client';
 import { restoreLocal, type SnapshotPayload } from './serialize';
 import { recomputeAllQuantities } from '../domain/inventory';
@@ -26,8 +33,21 @@ export interface PullProgress {
   photo_total?: number;
 }
 
+export interface DataVersion {
+  /** Drive file id — useful for re-fetching this exact version. */
+  id: string;
+  /** Filename like "data-20260528-142345.json", or "data.json" for legacy. */
+  name: string;
+  /** Parsed timestamp (ms) — taken from the filename, or modifiedTime fallback. */
+  timestamp_ms: number;
+  /** True when this was the pre-versioning singleton file. */
+  legacy: boolean;
+}
+
 export async function pullFromDrive(
-  onProgress: (p: PullProgress) => void
+  onProgress: (p: PullProgress) => void,
+  /** Optional: a specific version id from listDataVersions(). Defaults to latest. */
+  versionId?: string
 ): Promise<void> {
   onProgress({ stage: 'finding-folder', message: 'Locating Drive folder…' });
   const meta = await db.sync_meta.get('sync');
@@ -39,7 +59,25 @@ export async function pullFromDrive(
   }
   await db.sync_meta.update('sync', { drive_folder_id: folder.id });
 
-  // 1. Download meta.json first to validate schema version
+  // Decide which file to download.
+  let target: DriveFile | null = null;
+  if (versionId) {
+    target = await findFileById(versionId);
+    if (!target) {
+      throw new Error('That version is no longer on Drive.');
+    }
+  } else {
+    const versions = await listDataVersionsIn(folder.id);
+    if (versions.length === 0) {
+      throw new Error(
+        'No data file found in the Drive folder. Push from another device first.'
+      );
+    }
+    const latest = versions[0]; // sorted desc
+    target = { id: latest.id, name: latest.name, mimeType: 'application/json' };
+  }
+
+  // 1. Download meta.json (informational only — pulled version is decided above)
   const metaFile = await findFileByName(META_FILE, folder.id);
   let cloudDeviceLabel: string | null = null;
   let cloudModifiedAt: number | null = null;
@@ -60,11 +98,12 @@ export async function pullFromDrive(
     cloudModifiedAt = parsed.last_modified;
   }
 
-  // 2. Download data.json
-  onProgress({ stage: 'downloading-data', message: 'Downloading data.json…' });
-  const dataFile = await findFileByName(DATA_FILE, folder.id);
-  if (!dataFile) throw new Error('No data.json found in Drive folder.');
-  const dataBlob = await downloadFile(dataFile.id);
+  // 2. Download data file
+  onProgress({
+    stage: 'downloading-data',
+    message: `Downloading ${target.name}…`,
+  });
+  const dataBlob = await downloadFile(target.id);
   const snapshot = JSON.parse(await dataBlob.text()) as SnapshotPayload;
 
   // 3. Download all photos referenced by the snapshot
@@ -115,6 +154,44 @@ export async function pullFromDrive(
   });
 
   onProgress({ stage: 'done', message: 'Pull complete.' });
+}
+
+/**
+ * List every available data snapshot in the Drive folder, newest first.
+ * Used by the Sync page to show recent versions she can roll back to.
+ */
+export async function listDataVersions(): Promise<DataVersion[]> {
+  const meta = await db.sync_meta.get('sync');
+  const folder = await locateFolder(meta?.drive_folder_id ?? null);
+  if (!folder) return [];
+  return listDataVersionsIn(folder.id);
+}
+
+async function listDataVersionsIn(folderId: string): Promise<DataVersion[]> {
+  const children = await listChildren(folderId);
+  const versions: DataVersion[] = [];
+  for (const f of children) {
+    const ts = parseDataFilename(f.name);
+    if (ts !== null) {
+      versions.push({
+        id: f.id,
+        name: f.name,
+        timestamp_ms: ts,
+        legacy: false,
+      });
+    } else if (f.name === LEGACY_DATA_FILE) {
+      versions.push({
+        id: f.id,
+        name: f.name,
+        timestamp_ms: f.modifiedTime
+          ? Date.parse(f.modifiedTime)
+          : 0,
+        legacy: true,
+      });
+    }
+  }
+  versions.sort((a, b) => b.timestamp_ms - a.timestamp_ms);
+  return versions;
 }
 
 async function locateFolder(savedId: string | null) {

@@ -1,10 +1,15 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../../db/schema';
 import { authenticate, isAuthed, isConfigured } from '../../sync/drive-client';
 import { pushToDrive, type PushProgress } from '../../sync/push';
-import { pullFromDrive, type PullProgress } from '../../sync/pull';
-import { fmtRelative } from '../../utils/format';
+import {
+  listDataVersions,
+  pullFromDrive,
+  type DataVersion,
+  type PullProgress,
+} from '../../sync/pull';
+import { fmtDateTime, fmtRelative } from '../../utils/format';
 import { Confirm } from '../../components/Confirm';
 
 type Progress = PushProgress | PullProgress;
@@ -16,7 +21,12 @@ export function Sync() {
   const [error, setError] = useState<string | null>(null);
   const [confirmPush, setConfirmPush] = useState(false);
   const [confirmPull, setConfirmPull] = useState(false);
+  const [confirmRestore, setConfirmRestore] = useState<DataVersion | null>(
+    null
+  );
   const [authed, setAuthed] = useState(isAuthed());
+  const [versions, setVersions] = useState<DataVersion[] | null>(null);
+  const [versionsLoading, setVersionsLoading] = useState(false);
 
   if (!isConfigured()) {
     return <UnconfiguredNotice />;
@@ -31,12 +41,37 @@ export function Sync() {
     }
   }
 
+  async function refreshVersions() {
+    if (!authed) return;
+    setVersionsLoading(true);
+    try {
+      const list = await listDataVersions();
+      setVersions(list);
+    } catch (e) {
+      // Versions panel failure shouldn't block the page; surface but don't
+      // crash the rest of the UI.
+      setError(
+        `Couldn't list versions: ${e instanceof Error ? e.message : String(e)}`
+      );
+    } finally {
+      setVersionsLoading(false);
+    }
+  }
+
+  // Pull versions list on first connection + whenever a sync completes
+  // successfully so the latest push appears at the top.
+  useEffect(() => {
+    if (authed && versions === null) void refreshVersions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authed]);
+
   async function runPush() {
     setBusy(true);
     setError(null);
     setProgress(null);
     try {
       await pushToDrive((p) => setProgress(p));
+      await refreshVersions();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -44,12 +79,12 @@ export function Sync() {
     }
   }
 
-  async function runPull() {
+  async function runPull(versionId?: string) {
     setBusy(true);
     setError(null);
     setProgress(null);
     try {
-      await pullFromDrive((p) => setProgress(p));
+      await pullFromDrive((p) => setProgress(p), versionId);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -104,8 +139,8 @@ export function Sync() {
         >
           <div className="font-display text-xl">↑ Push to Drive</div>
           <p className="text-sm text-walnut/70 mt-1">
-            Upload everything on this device to your Drive, overwriting the
-            cloud copy.
+            Save a new versioned snapshot of this device to Drive. Previous
+            versions stay intact.
           </p>
         </button>
         <button
@@ -113,9 +148,9 @@ export function Sync() {
           disabled={busy}
           onClick={() => setConfirmPull(true)}
         >
-          <div className="font-display text-xl">↓ Pull from Drive</div>
+          <div className="font-display text-xl">↓ Pull latest</div>
           <p className="text-sm text-walnut/70 mt-1">
-            Download the cloud copy, replacing everything on this device.
+            Download the newest version, replacing everything on this device.
           </p>
         </button>
       </section>
@@ -142,10 +177,74 @@ export function Sync() {
         </div>
       )}
 
+      {authed && (
+        <section className="card p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="font-display text-lg">Recent versions</h3>
+            <button
+              className="text-sm text-walnut/70 hover:text-walnut disabled:opacity-50"
+              onClick={refreshVersions}
+              disabled={busy || versionsLoading}
+            >
+              {versionsLoading ? 'Loading…' : 'Refresh'}
+            </button>
+          </div>
+          <p className="text-xs text-walnut/60">
+            Every Push saves a new snapshot here. If the latest version is bad
+            or the data on this device gets corrupted, restore a prior one.
+            Photos are never deleted — they stay on Drive forever.
+          </p>
+          {versions === null ? (
+            <p className="text-sm text-walnut/60">
+              {versionsLoading
+                ? 'Loading versions…'
+                : 'Sign in and push or pull once to populate.'}
+            </p>
+          ) : versions.length === 0 ? (
+            <p className="text-sm text-walnut/60">
+              No snapshots in the Drive folder yet.
+            </p>
+          ) : (
+            <ul className="divide-y divide-brass/20">
+              {versions.slice(0, 30).map((v, i) => (
+                <li
+                  key={v.id}
+                  className="py-2 flex items-center justify-between gap-3"
+                >
+                  <div className="min-w-0">
+                    <div className="font-ui text-sm">
+                      {fmtDateTime(v.timestamp_ms)}
+                      {i === 0 && (
+                        <span className="text-brass-dark ml-2">· latest</span>
+                      )}
+                      {v.legacy && (
+                        <span className="text-walnut/40 ml-2 text-xs">
+                          (pre-versioning)
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-walnut/50 font-mono truncate">
+                      {v.name}
+                    </div>
+                  </div>
+                  <button
+                    className="text-sm text-walnut hover:text-brass-dark disabled:opacity-50"
+                    disabled={busy}
+                    onClick={() => setConfirmRestore(v)}
+                  >
+                    Restore
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
       <Confirm
         open={confirmPush}
         title="Push to Drive?"
-        body="This will overwrite the cloud copy with everything currently on this device. The cloud will match this device exactly after."
+        body="This will save a new snapshot of everything currently on this device. Previous snapshots stay on Drive untouched."
         confirmLabel="Push"
         onCancel={() => setConfirmPush(false)}
         onConfirm={() => {
@@ -155,14 +254,27 @@ export function Sync() {
       />
       <Confirm
         open={confirmPull}
-        title="Pull from Drive?"
-        body="This will overwrite everything on this device with the cloud copy. Any unsynced changes on this device will be lost."
-        confirmLabel="Pull"
+        title="Pull latest version?"
+        body="This will overwrite everything on this device with the most recent cloud snapshot. Any unsynced changes on this device will be lost."
+        confirmLabel="Pull latest"
         danger
         onCancel={() => setConfirmPull(false)}
         onConfirm={() => {
           setConfirmPull(false);
           runPull();
+        }}
+      />
+      <Confirm
+        open={!!confirmRestore}
+        title={confirmRestore ? `Restore ${fmtDateTime(confirmRestore.timestamp_ms)}?` : ''}
+        body="This will overwrite everything on this device with that snapshot. Push afterward to record it as the new latest version, otherwise the next Pull will go back to the actual latest."
+        confirmLabel="Restore"
+        danger
+        onCancel={() => setConfirmRestore(null)}
+        onConfirm={() => {
+          const v = confirmRestore;
+          setConfirmRestore(null);
+          if (v) runPull(v.id);
         }}
       />
     </div>
