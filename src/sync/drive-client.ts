@@ -26,6 +26,7 @@ declare global {
           initTokenClient: (config: {
             client_id: string;
             scope: string;
+            hint?: string;
             callback: (resp: { access_token?: string; error?: string }) => void;
           }) => {
             requestAccessToken: (opts?: { prompt?: string }) => void;
