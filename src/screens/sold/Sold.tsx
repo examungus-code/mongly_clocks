@@ -160,7 +160,7 @@ export function Sold() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h2 className="text-2xl">Sold</h2>
+        <h2 className="text-2xl">Data</h2>
         <button
           className="btn-primary"
           onClick={exportCsv}

@@ -20,7 +20,6 @@ const REASONS: { value: AdjustmentReason | ''; label: string }[] = [
   { value: '', label: 'All reasons' },
   { value: 'sold', label: 'Sold' },
   { value: 'restocked', label: 'Restocked' },
-  { value: 'lost', label: 'Lost' },
   { value: 'broken', label: 'Broken' },
   { value: 'manual_correction', label: 'Manual correction' },
 ];
@@ -42,7 +41,8 @@ export function AdjustmentLog() {
   const lineItems = useLiveQuery(() => db.line_items.toArray());
   const categories = useLiveQuery(() => db.categories.toArray());
 
-  const [reasonFilter, setReasonFilter] = useState<AdjustmentReason | ''>('');
+  const [reasonFilter, setReasonFilter] =
+    useState<AdjustmentReason | ''>('sold');
   const [productFilter, setProductFilter] = useState<ID | ''>('');
   const [pendingDelete, setPendingDelete] =
     useState<InventoryAdjustment | null>(null);
