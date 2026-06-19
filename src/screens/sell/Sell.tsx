@@ -26,6 +26,7 @@ interface Toast {
 export function Sell() {
   const navigate = useNavigate();
   const session = useLiveQuery(() => db.session.get('session'));
+  const prefs = useLiveQuery(() => db.prefs.get('prefs'));
   const products = useLiveQuery(() =>
     db.products.filter((p) => !p.archived).toArray()
   );
@@ -130,6 +131,10 @@ export function Sell() {
         festival_id: session?.festival_id ?? null,
       });
       showToast(product.name + (subtype ? ` · ${subtype}` : ''));
+      // Optional jump-to-root after a sale, controlled by a settings flag.
+      if (prefs?.return_to_top_after_sale) {
+        setCwd(null);
+      }
     } catch (err) {
       console.error('sale failed', err);
       alert(

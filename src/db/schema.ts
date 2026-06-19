@@ -149,6 +149,13 @@ export interface SyncMetadata {
 export interface AppPrefs {
   id: 'prefs';
   schema_seeded: boolean;
+  /**
+   * When true, the Sell screen jumps back to the top-level category list
+   * after every successful sale (single tap, or subtype pick). When false
+   * (default), it stays on the current category so she can sell more of
+   * the same kind in a row.
+   */
+  return_to_top_after_sale?: boolean;
 }
 
 class ClockworkDB extends Dexie {

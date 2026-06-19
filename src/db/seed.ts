@@ -63,7 +63,11 @@ export async function seedIfNeeded(): Promise<void> {
         drive_folder_id: null,
       });
 
-      await db.prefs.put({ id: 'prefs', schema_seeded: true });
+      await db.prefs.put({
+        id: 'prefs',
+        schema_seeded: true,
+        return_to_top_after_sale: false,
+      });
     }
   );
 }
