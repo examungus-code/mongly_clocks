@@ -57,6 +57,14 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
         // Drive API responses aren't cached — they should always go to network.
         navigateFallbackDenylist: [/^\/api/, /googleapis\.com/],
+        // Aggressive update posture: as soon as the new SW finishes
+        // installing, take over active clients and skip the usual "wait
+        // until every tab closes" grace period. Combined with the
+        // controllerchange auto-reload in main.tsx, this means the
+        // browser picks up new deploys within one visit instead of two.
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
       },
     }),
   ],
