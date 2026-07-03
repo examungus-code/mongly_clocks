@@ -1,4 +1,4 @@
-// Sold — hierarchical sold-quantity view.
+// Data — hierarchical sold-quantity view.
 //
 // Categories form an indented bulleted tree; products are the leaves. Each
 // row shows the name on the left and the qty sold on the right. Category
@@ -11,12 +11,20 @@
 // that's only ever consumed inside silver necklaces still shows accurate
 // totals here. This is the opposite of the AdjustmentLog page, which hides
 // those component decrements because they'd duplicate the necklace row.
+//
+// For sized products (rings, etc.) each product row expands into per-size
+// breakdown rows so she can see which sizes actually moved.
 
 import { useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type ID } from '../../db/schema';
+import { db, type ID, type Product } from '../../db/schema';
 import { type CategoryNode } from '../../domain/catalogue';
 import { downloadCsv, toCsv } from '../../utils/csv-export';
+
+interface SoldTotals {
+  total: number;
+  bySize: Map<string, number>;
+}
 
 export function Sold() {
   const categories = useLiveQuery(() => db.categories.toArray());
@@ -36,12 +44,12 @@ export function Sold() {
   const [selectedSession, setSelectedSession] = useState<string>('total');
   const [collapsed, setCollapsed] = useState<Set<ID>>(new Set());
 
-  // soldByProduct = map of product_id -> qty sold in the selected session
-  // (or across all sessions when 'total' is selected). Includes both line
-  // items (regular sales) and sold_component adjustments (chains decremented
-  // because a necklace they're linked to was sold).
+  // soldByProduct = map of product_id -> { total, bySize } for the selected
+  // session (or across all sessions when 'total' is selected). Includes both
+  // line items (regular sales) and sold_component adjustments (chains
+  // decremented because a necklace they're linked to was sold).
   const soldByProduct = useMemo(() => {
-    const map = new Map<ID, number>();
+    const map = new Map<ID, SoldTotals>();
     if (!transactions || !lineItems) return map;
     let txIds: Set<ID> | null = null;
     if (selectedSession !== 'total') {
@@ -55,21 +63,26 @@ export function Sold() {
           .map((t) => t.id)
       );
     }
+    function bump(pid: ID, qty: number, size: string | null | undefined) {
+      let entry = map.get(pid);
+      if (!entry) {
+        entry = { total: 0, bySize: new Map() };
+        map.set(pid, entry);
+      }
+      entry.total += qty;
+      if (size) {
+        entry.bySize.set(size, (entry.bySize.get(size) ?? 0) + qty);
+      }
+    }
     for (const line of lineItems) {
       if (txIds && !txIds.has(line.transaction_id)) continue;
-      map.set(
-        line.product_id,
-        (map.get(line.product_id) ?? 0) + line.quantity
-      );
+      bump(line.product_id, line.quantity, line.size ?? null);
     }
     for (const adj of componentAdjustments ?? []) {
       if (!adj.transaction_id) continue;
       if (txIds && !txIds.has(adj.transaction_id)) continue;
-      // delta is negative for 'sold_component'; flip to get qty consumed.
-      map.set(
-        adj.product_id,
-        (map.get(adj.product_id) ?? 0) + -adj.delta
-      );
+      // Components aren't sized, so no size bump.
+      bump(adj.product_id, -adj.delta, null);
     }
     return map;
   }, [transactions, lineItems, componentAdjustments, sessions, selectedSession]);
@@ -85,9 +98,13 @@ export function Sold() {
     [categories, products]
   );
 
+  function productTotal(p_id: ID): number {
+    return soldByProduct.get(p_id)?.total ?? 0;
+  }
+
   function recursiveCount(node: CategoryNode): number {
     let total = 0;
-    for (const p of node.products) total += soldByProduct.get(p.id) ?? 0;
+    for (const p of node.products) total += productTotal(p.id);
     for (const c of node.children) total += recursiveCount(c);
     return total;
   }
@@ -120,26 +137,64 @@ export function Sold() {
 
   function exportCsv() {
     if (!tree) return;
-    // CSV rows: full category path + product + quantity. One row per product
-    // with at least one sale; categories themselves aren't emitted (they're
-    // implicit in the path column).
+    // CSV rows: full category path + product + size (when applicable) +
+    // quantity. Sized products emit one row per size that had sales;
+    // everything else emits one row per product.
     const rows: Record<string, unknown>[] = [];
     function walk(node: CategoryNode, path: string[]) {
       const here = [...path, node.name];
       for (const p of node.products) {
-        const qty = soldByProduct.get(p.id) ?? 0;
-        if (qty === 0) continue;
-        rows.push({
-          category: here.join(' / '),
-          product: p.name,
-          quantity: qty,
-        });
+        const entry = soldByProduct.get(p.id);
+        if (!entry || entry.total === 0) continue;
+        const productSizes = p.sizes ?? [];
+        if (productSizes.length > 0 && entry.bySize.size > 0) {
+          // Preserve the product's declared size order, then any that
+          // slipped in from historical data (e.g. renamed sizes).
+          const ordered = [
+            ...productSizes.filter((s) => entry.bySize.has(s)),
+            ...Array.from(entry.bySize.keys()).filter(
+              (s) => !productSizes.includes(s)
+            ),
+          ];
+          for (const size of ordered) {
+            const qty = entry.bySize.get(size) ?? 0;
+            if (qty === 0) continue;
+            rows.push({
+              category: here.join(' / '),
+              product: p.name,
+              size,
+              quantity: qty,
+            });
+          }
+          // Any unsized quantity on a sized product (component decrements
+          // or legacy line items) still needs to be represented.
+          const sizedQty = Array.from(entry.bySize.values()).reduce(
+            (a, b) => a + b,
+            0
+          );
+          const remainder = entry.total - sizedQty;
+          if (remainder !== 0) {
+            rows.push({
+              category: here.join(' / '),
+              product: p.name,
+              size: '',
+              quantity: remainder,
+            });
+          }
+        } else {
+          rows.push({
+            category: here.join(' / '),
+            product: p.name,
+            size: '',
+            quantity: entry.total,
+          });
+        }
       }
       for (const c of node.children) walk(c, here);
     }
     for (const n of tree) walk(n, []);
     if (rows.length === 0) return;
-    const csv = toCsv(rows, ['category', 'product', 'quantity']);
+    const csv = toCsv(rows, ['category', 'product', 'size', 'quantity']);
     const sessionTag =
       selectedSession === 'total'
         ? 'all-sessions'
@@ -150,7 +205,7 @@ export function Sold() {
               .toISOString()
               .slice(0, 10)
           : 'session';
-    downloadCsv(`clockwork-history-${sessionTag}.csv`, csv);
+    downloadCsv(`clockwork-data-${sessionTag}.csv`, csv);
   }
 
   if (!tree) return <div>Loading…</div>;
@@ -223,7 +278,7 @@ function Row({
 }: {
   node: CategoryNode;
   depth: number;
-  soldByProduct: Map<ID, number>;
+  soldByProduct: Map<ID, SoldTotals>;
   recursiveCount: (n: CategoryNode) => number;
   collapsed: Set<ID>;
   onToggle: (id: ID) => void;
@@ -259,33 +314,14 @@ function Row({
       </button>
       {!isCollapsed && (
         <>
-          {node.products.map((p) => {
-            const qty = soldByProduct.get(p.id) ?? 0;
-            return (
-              <div
-                key={p.id}
-                className="grid grid-cols-[1fr_auto] gap-3 items-center px-3 py-1.5 text-sm"
-                style={{ paddingLeft: indent + 12 + 16 }}
-              >
-                <span className="flex items-center gap-1 truncate">
-                  <span className="text-walnut/30 text-xs w-3 inline-block">
-                    ◦
-                  </span>
-                  <span className={p.archived ? 'text-walnut/50 italic' : ''}>
-                    {p.name}
-                    {p.archived && ' (archived)'}
-                  </span>
-                </span>
-                <span
-                  className={`tabular-nums ${
-                    qty > 0 ? 'text-walnut' : 'text-walnut/30'
-                  }`}
-                >
-                  {qty}
-                </span>
-              </div>
-            );
-          })}
+          {node.products.map((p) => (
+            <ProductLine
+              key={p.id}
+              product={p}
+              entry={soldByProduct.get(p.id)}
+              indent={indent + 12 + 16}
+            />
+          ))}
           {node.children.map((child) => (
             <Row
               key={child.id}
@@ -300,6 +336,89 @@ function Row({
         </>
       )}
     </div>
+  );
+}
+
+function ProductLine({
+  product,
+  entry,
+  indent,
+}: {
+  product: Product;
+  entry: SoldTotals | undefined;
+  indent: number;
+}) {
+  const qty = entry?.total ?? 0;
+  const productSizes = product.sizes ?? [];
+  const hasSizes = productSizes.length > 0;
+  // Only surface the per-size breakdown when the product was actually set up
+  // with sizes AND at least one size row would have a non-zero count.
+  const sizedRows: Array<{ size: string; qty: number }> = [];
+  let unsizedRemainder = 0;
+  if (entry) {
+    if (hasSizes) {
+      // Product's declared size order first, then any stragglers (e.g.
+      // renamed sizes that still exist in old sales).
+      const ordered = [
+        ...productSizes.filter((s) => entry.bySize.has(s)),
+        ...Array.from(entry.bySize.keys()).filter(
+          (s) => !productSizes.includes(s)
+        ),
+      ];
+      for (const s of ordered) {
+        const c = entry.bySize.get(s) ?? 0;
+        if (c !== 0) sizedRows.push({ size: s, qty: c });
+      }
+      const sizedTotal = Array.from(entry.bySize.values()).reduce(
+        (a, b) => a + b,
+        0
+      );
+      unsizedRemainder = entry.total - sizedTotal;
+    }
+  }
+
+  return (
+    <>
+      <div
+        className="grid grid-cols-[1fr_auto] gap-3 items-center px-3 py-1.5 text-sm"
+        style={{ paddingLeft: indent }}
+      >
+        <span className="flex items-center gap-1 truncate">
+          <span className="text-walnut/30 text-xs w-3 inline-block">◦</span>
+          <span className={product.archived ? 'text-walnut/50 italic' : ''}>
+            {product.name}
+            {product.archived && ' (archived)'}
+          </span>
+        </span>
+        <span
+          className={`tabular-nums ${
+            qty > 0 ? 'text-walnut' : 'text-walnut/30'
+          }`}
+        >
+          {qty}
+        </span>
+      </div>
+      {sizedRows.length > 0 &&
+        sizedRows.map((r) => (
+          <div
+            key={r.size}
+            className="grid grid-cols-[1fr_auto] gap-3 items-center px-3 py-1 text-xs text-walnut/70"
+            style={{ paddingLeft: indent + 20 }}
+          >
+            <span className="truncate">size {r.size}</span>
+            <span className="tabular-nums">{r.qty}</span>
+          </div>
+        ))}
+      {hasSizes && unsizedRemainder !== 0 && (
+        <div
+          className="grid grid-cols-[1fr_auto] gap-3 items-center px-3 py-1 text-xs text-walnut/60 italic"
+          style={{ paddingLeft: indent + 20 }}
+        >
+          <span className="truncate">no size recorded</span>
+          <span className="tabular-nums">{unsizedRemainder}</span>
+        </div>
+      )}
+    </>
   );
 }
 
