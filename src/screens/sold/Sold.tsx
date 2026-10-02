@@ -73,6 +73,7 @@ export function Sold() {
     db.adjustments.where('reason').equals('sold_component').toArray()
   );
   const sessions = useLiveQuery(() => db.session_records.toArray());
+  const openSession = useLiveQuery(() => db.session.get('session'));
   const festivals = useLiveQuery(async () =>
     (await db.festivals.toArray()).sort((a, b) => a.name.localeCompare(b.name))
   );
@@ -431,6 +432,8 @@ export function Sold() {
           weekends={workedWeekends}
           festivalsById={new Map((festivals ?? []).map((f) => [f.id, f]))}
           showFestival={filter.festival_id === null}
+          transactions={transactions ?? []}
+          openSessionStartedAt={openSession?.started_at ?? null}
           onClose={() => setShowingWeekends(false)}
         />
       )}
