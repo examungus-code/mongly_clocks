@@ -1,7 +1,8 @@
 // Read-only filtering of sales for the Data page.
 //
-// A filter picks which transactions count: everything, a calendar date range,
-// or one festival. Dates are local calendar days as 'YYYY-MM-DD' strings so
+// A filter picks which transactions count. Its two parts are independent and
+// combine: an optional festival and an optional calendar date range (null =
+// no restriction). Dates are local calendar days as 'YYYY-MM-DD' strings so
 // "May 3" means May 3 wherever the device is.
 //
 // Weekends: sessions are recorded per day, so per-weekend numbers group sale
@@ -12,10 +13,15 @@
 
 import type { ID, SessionRecord, Transaction } from '../db/schema';
 
-export type SalesFilter =
-  | { kind: 'all' }
-  | { kind: 'range'; start: string; end: string } // inclusive
-  | { kind: 'festival'; festival_id: ID };
+export interface DateRange {
+  start: string;
+  end: string; // inclusive
+}
+
+export interface SalesFilter {
+  festival_id: ID | null;
+  range: DateRange | null;
+}
 
 /** Local calendar day of a timestamp, as 'YYYY-MM-DD'. */
 export function dayKey(ms: number): string {
@@ -45,13 +51,12 @@ export function weekendKey(day: string): string {
 }
 
 function dayMatches(filter: SalesFilter, day: string): boolean {
-  if (filter.kind !== 'range') return true;
-  return day >= filter.start && day <= filter.end;
+  const { range } = filter;
+  return !range || (day >= range.start && day <= range.end);
 }
 
 function festivalMatches(filter: SalesFilter, festival_id: ID | null): boolean {
-  if (filter.kind !== 'festival') return true;
-  return festival_id === filter.festival_id;
+  return filter.festival_id === null || festival_id === filter.festival_id;
 }
 
 export function transactionMatches(

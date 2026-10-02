@@ -3,9 +3,10 @@
 // Categories form an indented bulleted tree; products are the leaves. Each
 // row shows the name on the left and the qty sold on the right. Category
 // counts are recursive sums of every product inside (including sub-categories).
-// A filter at the top picks all sales, a calendar date range, or one
-// festival. Next to each sold count is the average per weekend worked under
-// that filter (see domain/sales-filter.ts for how days group into weekends).
+// Two independent filters at the top combine: a festival (or all) and a
+// calendar date range (or all dates). Next to each sold count is the average
+// per weekend worked under those filters (see domain/sales-filter.ts for how
+// days group into weekends).
 // Categories and the products inside each category sort independently.
 //
 // Per-product counts include both regular line-item sales AND component
@@ -60,7 +61,10 @@ export function Sold() {
     (await db.festivals.toArray()).sort((a, b) => a.name.localeCompare(b.name))
   );
 
-  const [filter, setFilter] = useState<SalesFilter>({ kind: 'all' });
+  const [filter, setFilter] = useState<SalesFilter>({
+    festival_id: null,
+    range: null,
+  });
   const [pickingRange, setPickingRange] = useState(false);
   const [categorySort, setCategorySort] = useState<SortOrder>('catalog');
   const [productSort, setProductSort] = useState<SortOrder>('catalog');
@@ -108,10 +112,20 @@ export function Sold() {
     [transactions, sessions, filter]
   );
 
-  // Days with any sale, marked in the calendar so festival weekends stand out.
+  // Days with a sale at the chosen festival (or any festival), marked in the
+  // calendar so that festival's weekends stand out.
   const saleDays = useMemo(
-    () => new Set((transactions ?? []).map((t) => dayKey(t.occurred_at))),
-    [transactions]
+    () =>
+      new Set(
+        (transactions ?? [])
+          .filter(
+            (t) =>
+              filter.festival_id === null ||
+              t.festival_id === filter.festival_id
+          )
+          .map((t) => dayKey(t.occurred_at))
+      ),
+    [transactions, filter.festival_id]
   );
 
   // Build the category tree in catalog order, total every category, then
@@ -217,17 +231,6 @@ export function Sold() {
     0
   );
 
-  const selectValue =
-    filter.kind === 'festival' ? `festival:${filter.festival_id}` : filter.kind;
-
-  function handleFilterChange(value: string) {
-    if (value === 'all') setFilter({ kind: 'all' });
-    else if (value === 'range') setPickingRange(true);
-    else if (value.startsWith('festival:')) {
-      setFilter({ kind: 'festival', festival_id: value.slice(9) });
-    }
-  }
-
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
@@ -242,30 +245,48 @@ export function Sold() {
       </div>
 
       <div className="flex items-center gap-3 flex-wrap">
-        <label className="text-sm font-ui text-walnut/70">Show</label>
-        <select
-          className="input !min-h-0 !py-1.5 max-w-xs"
-          value={selectValue}
-          onChange={(e) => handleFilterChange(e.target.value)}
-        >
-          <option value="all">Total (all sessions)</option>
-          <option value="range">Date range…</option>
-          {festivals?.map((f) => (
-            <option key={f.id} value={`festival:${f.id}`}>
-              {f.name} total
-            </option>
-          ))}
-        </select>
-        {filter.kind === 'range' && (
+        <label className="flex items-center gap-2 text-sm font-ui text-walnut/70">
+          Festival
+          <select
+            className="input !min-h-0 !py-1.5 max-w-xs"
+            value={filter.festival_id ?? ''}
+            onChange={(e) =>
+              setFilter((f) => ({ ...f, festival_id: e.target.value || null }))
+            }
+          >
+            <option value="">All festivals</option>
+            {festivals?.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="flex items-center gap-2 text-sm font-ui text-walnut/70">
+          Dates
           <button
             type="button"
             className="btn-secondary !min-h-0 !py-1.5 text-sm"
             onClick={() => setPickingRange(true)}
-            title="Change dates"
+            title="Pick a date range"
           >
-            {rangeLabel(filter.start, filter.end)} ✎
+            {filter.range
+              ? rangeLabel(filter.range.start, filter.range.end)
+              : 'All dates'}{' '}
+            ✎
           </button>
-        )}
+          {filter.range && (
+            <button
+              type="button"
+              className="text-walnut/60 hover:text-walnut px-1"
+              onClick={() => setFilter((f) => ({ ...f, range: null }))}
+              title="Clear dates (show all dates)"
+              aria-label="Clear dates"
+            >
+              ✕
+            </button>
+          )}
+        </div>
         <span className="text-sm text-walnut/70 ml-auto">
           Total sold:{' '}
           <strong className="font-display text-base text-walnut">
@@ -339,10 +360,10 @@ export function Sold() {
 
       {pickingRange && (
         <DateRangePicker
-          initial={filter.kind === 'range' ? filter : null}
+          initial={filter.range}
           markedDays={saleDays}
           onApply={(start, end) => {
-            setFilter({ kind: 'range', start, end });
+            setFilter((f) => ({ ...f, range: { start, end } }));
             setPickingRange(false);
           }}
           onCancel={() => setPickingRange(false)}
@@ -534,18 +555,24 @@ function filterFileTag(
   filter: SalesFilter,
   festivals: Festival[] | undefined
 ): string {
-  if (filter.kind === 'all') return 'all-sessions';
-  if (filter.kind === 'range') {
-    return filter.start === filter.end
-      ? filter.start
-      : `${filter.start}-to-${filter.end}`;
+  const parts: string[] = [];
+  if (filter.festival_id !== null) {
+    const name =
+      festivals?.find((f) => f.id === filter.festival_id)?.name ?? 'festival';
+    parts.push(
+      name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '')
+    );
   }
-  const name =
-    festivals?.find((f) => f.id === filter.festival_id)?.name ?? 'festival';
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
+  const { range } = filter;
+  if (range) {
+    parts.push(
+      range.start === range.end ? range.start : `${range.start}-to-${range.end}`
+    );
+  }
+  return parts.length > 0 ? parts.join('-') : 'all-sessions';
 }
 
 /**
