@@ -1,4 +1,4 @@
-// Recent sales for the current session, with the ability to fully erase a
+// Today's sales, with the ability to fully erase a
 // mistaken sale. Deleting restores the quantity to inventory and removes the
 // transaction from history entirely (no audit record — this is for mistakes,
 // not refunds).
@@ -8,29 +8,30 @@ import { Link } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type ID } from '../../db/schema';
 import { deleteTransaction } from '../../domain/transactions';
-import { fmtDateTime } from '../../utils/format';
+import { fmtDateTime, startOfToday } from '../../utils/format';
 import { Confirm } from '../../components/Confirm';
 
 export function RecentSales() {
-  const session = useLiveQuery(() => db.session.get('session'));
-  const sessionStart = session?.started_at ?? 0;
-
-  // Show sales from this session, most recent first. If no session is active,
-  // fall back to the last 24 hours so it's still useful right after End.
-  const since =
-    sessionStart > 0 ? sessionStart : Date.now() - 24 * 60 * 60 * 1000;
+  // Today's sales (since local midnight), most recent first.
+  const since = startOfToday();
 
   const transactions = useLiveQuery(
     () =>
       db.transactions
         .where('occurred_at')
-        .above(since)
+        .aboveOrEqual(since)
         .reverse()
         .sortBy('occurred_at'),
     [since]
   );
   const lineItems = useLiveQuery(() => db.line_items.toArray());
   const products = useLiveQuery(() => db.products.toArray());
+  const festivals = useLiveQuery(() => db.festivals.toArray());
+
+  const festivalName = (id: ID | null) =>
+    id
+      ? (festivals?.find((f) => f.id === id)?.name ?? '(deleted festival)')
+      : 'No festival';
 
   const [pendingDelete, setPendingDelete] = useState<ID | null>(null);
 
@@ -51,9 +52,8 @@ export function RecentSales() {
       </div>
 
       <p className="text-xs text-walnut/60">
-        {sessionStart > 0
-          ? 'Sales from this session. Delete a sale to fully reverse it — the quantity is restored to inventory and the sale is removed from history.'
-          : 'No active session. Showing sales from the last 24 hours.'}
+        Today's sales. Delete a sale to fully reverse it — the quantity is
+        restored to inventory and the sale is removed from history.
       </p>
 
       {!transactions || transactions.length === 0 ? (
@@ -67,7 +67,8 @@ export function RecentSales() {
               <li key={tx.id} className="card p-3">
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-xs text-walnut/70">
-                    {fmtDateTime(tx.occurred_at)}
+                    {fmtDateTime(tx.occurred_at)} ·{' '}
+                    {festivalName(tx.festival_id)}
                   </div>
                   <div className="text-sm text-walnut/60">
                     {totalQty} item{totalQty === 1 ? '' : 's'}

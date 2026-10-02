@@ -1,8 +1,12 @@
 // Sell screen — booth optimized for speed.
 //
 // Tap = sale. One tap on a product tile records a single-line transaction
-// of quantity 1. The only exception is products that have subtypes but no
-// default subtype set — those open a one-tap subtype picker, then sell.
+// of quantity 1. The only exception is products that have subtypes or sizes —
+// those open a one-tap picker, then sell.
+//
+// Every sale is tagged with the festival picked in the menu at the top (see
+// hooks/useCurrentFestival.ts). There is no session to start or end; she
+// just changes the festival when she moves to another faire.
 //
 // No cart, no search bar, no quantity stepper. This is strictly an inventory
 // tracker; there is no currency or payment. Mistakes are corrected via the
@@ -10,12 +14,14 @@
 // inventory adjustments.
 
 import { useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Category, type ID, type Product } from '../../db/schema';
 import { PhotoImg } from '../../components/PhotoImg';
 import { completeTransaction } from '../../domain/transactions';
 import { resolveSubtypeConfig } from '../../domain/catalogue';
+import { useCurrentFestival } from '../../hooks/useCurrentFestival';
+import { startOfToday } from '../../utils/format';
 import { SubtypePicker } from './SubtypePicker';
 
 interface Toast {
@@ -24,17 +30,12 @@ interface Toast {
 }
 
 export function Sell() {
-  const navigate = useNavigate();
-  const session = useLiveQuery(() => db.session.get('session'));
   const prefs = useLiveQuery(() => db.prefs.get('prefs'));
   const products = useLiveQuery(() =>
     db.products.filter((p) => !p.archived).toArray()
   );
   const categories = useLiveQuery(() => db.categories.toArray());
-  const festival = useLiveQuery(
-    () => (session?.festival_id ? db.festivals.get(session.festival_id) : undefined),
-    [session?.festival_id]
-  );
+  const festival = useCurrentFestival();
 
   const [cwd, setCwd] = useState<ID | null>(null); // null = root
   const [pickingSubtypeFor, setPickingSubtypeFor] = useState<Product | null>(
@@ -72,10 +73,12 @@ export function Sell() {
       }
 
       const ancestors: Category[] = [];
-      let cursor = cwd ? categoryById.get(cwd) ?? null : null;
+      let cursor = cwd ? (categoryById.get(cwd) ?? null) : null;
       while (cursor) {
         ancestors.unshift(cursor);
-        cursor = cursor.parent_id ? categoryById.get(cursor.parent_id) ?? null : null;
+        cursor = cursor.parent_id
+          ? (categoryById.get(cursor.parent_id) ?? null)
+          : null;
       }
 
       return { childrenByParent, productsByCategory, ancestors, categoryById };
@@ -89,32 +92,30 @@ export function Sell() {
     return total;
   }
 
-  // Today's totals — item count + transaction count, no currency.
-  const since = session?.started_at ?? 0;
+  // Today's totals (since local midnight) — item count, no currency.
+  const since = startOfToday();
   const todaysTx = useLiveQuery(
-    () => db.transactions.where('occurred_at').above(since).toArray(),
+    () => db.transactions.where('occurred_at').aboveOrEqual(since).toArray(),
     [since]
   );
   const todaysItemCount = useLiveQuery(async () => {
     if (!todaysTx) return 0;
     const ids = todaysTx.map((t) => t.id);
     if (ids.length === 0) return 0;
-    const lines = await db.line_items.where('transaction_id').anyOf(ids).toArray();
+    const lines = await db.line_items
+      .where('transaction_id')
+      .anyOf(ids)
+      .toArray();
     return lines.reduce((s, l) => s + l.quantity, 0);
   }, [todaysTx]);
 
-  if (!session?.started_at) {
-    return (
-      <div className="text-center py-12 space-y-4">
-        <h2 className="text-2xl">No active session</h2>
-        <p className="text-walnut/70">
-          Start a session to pick a festival.
-        </p>
-        <Link to="/session/start" className="btn-primary">
-          Start session
-        </Link>
-      </div>
-    );
+  async function handleFestivalChange(value: string) {
+    if (value === '__new') {
+      const name = prompt('New festival name')?.trim();
+      if (name) await festival.createAndSelect(name);
+      return;
+    }
+    await festival.select(value || null);
   }
 
   async function sellNow(
@@ -133,10 +134,9 @@ export function Sell() {
             size,
           },
         ],
-        festival_id: session?.festival_id ?? null,
+        festival_id: festival.currentId,
       });
-      const tag =
-        (subtype ? ` · ${subtype}` : '') + (size ? ` · ${size}` : '');
+      const tag = (subtype ? ` · ${subtype}` : '') + (size ? ` · ${size}` : '');
       showToast(product.name + tag);
       // Optional jump-to-root after a sale, controlled by a settings flag.
       if (prefs?.return_to_top_after_sale) {
@@ -144,9 +144,7 @@ export function Sell() {
       }
     } catch (err) {
       console.error('sale failed', err);
-      alert(
-        `Sale failed: ${err instanceof Error ? err.message : String(err)}`
-      );
+      alert(`Sale failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -173,54 +171,55 @@ export function Sell() {
   }
 
   const currentSubcategories = childrenByParent.get(cwd) ?? [];
-  const currentProducts = cwd ? productsByCategory.get(cwd) ?? [] : [];
+  const currentProducts = cwd ? (productsByCategory.get(cwd) ?? []) : [];
 
   return (
     <div className="relative pb-24">
-      <div className="flex items-center justify-between gap-3 mb-3">
-        <div>
-          <div className="text-xs uppercase text-brass-dark font-ui">
-            Session
-          </div>
-          <div className="font-display text-lg leading-tight">
-            {festival?.name ?? '—'}
-          </div>
-        </div>
-        <div className="text-right">
+      <div className="flex items-end justify-between gap-3 mb-1">
+        <label className="flex-1 min-w-0">
+          <span className="block text-xs uppercase text-brass-dark font-ui">
+            Selling at
+          </span>
+          <select
+            className="input !min-h-0 !py-1.5 font-display"
+            value={festival.currentId ?? ''}
+            onChange={(e) => void handleFestivalChange(e.target.value)}
+          >
+            <option value="">No festival</option>
+            {festival.festivals
+              ?.filter((f) => !f.archived || f.id === festival.currentId)
+              .map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            <option value="__new">+ New festival…</option>
+          </select>
+        </label>
+        <div className="text-right shrink-0">
           <div className="text-xs uppercase text-brass-dark font-ui">Today</div>
           <div className="font-display text-lg leading-tight">
             {todaysItemCount ?? 0} item
             {todaysItemCount === 1 ? '' : 's'}
           </div>
         </div>
-        <Link to="/sell/recent" className="btn-ghost text-sm">
+        <Link to="/sell/recent" className="btn-ghost text-sm shrink-0">
           Recent
         </Link>
-        <button
-          className="btn-ghost text-sm"
-          onClick={async () => {
-            if (!confirm('End session?')) return;
-            const now = Date.now();
-            const startedAt = session?.started_at ?? null;
-            if (startedAt) {
-              const active = await db.session_records
-                .where('started_at')
-                .equals(startedAt)
-                .first();
-              if (active && active.ended_at === null) {
-                await db.session_records.update(active.id, {
-                  ended_at: now,
-                  updated_at: now,
-                });
-              }
-            }
-            await db.session.update('session', { started_at: null });
-            navigate('/');
-          }}
-        >
-          End
-        </button>
       </div>
+      {festival.wasReset ? (
+        <p className="text-xs text-copper mb-3">
+          The festival you had picked is no longer in the festival list (a Pull
+          from Drive may have replaced it). Pick where you're selling above.
+        </p>
+      ) : festival.currentId === null ? (
+        <p className="text-xs text-walnut/60 mb-3">
+          Sales won't be tagged with a festival. Pick one above if you're at a
+          faire.
+        </p>
+      ) : (
+        <div className="mb-3" />
+      )}
 
       <nav className="flex flex-wrap items-center gap-1 mb-3 text-sm">
         <button
@@ -277,8 +276,8 @@ export function Sell() {
           {products?.length === 0
             ? 'No products yet. Add some in Catalogue.'
             : cwd === null
-            ? 'Tap a category above to drill in.'
-            : 'Nothing in this category yet.'}
+              ? 'Tap a category above to drill in.'
+              : 'Nothing in this category yet.'}
         </p>
       ) : (
         currentProducts.length > 0 && (
@@ -318,7 +317,9 @@ export function Sell() {
       {pickingSubtypeFor && (
         <SubtypePicker
           product={pickingSubtypeFor}
-          subtypes={resolveSubtypeConfig(pickingSubtypeFor, categoryById).subtypes}
+          subtypes={
+            resolveSubtypeConfig(pickingSubtypeFor, categoryById).subtypes
+          }
           sizes={pickingSubtypeFor.sizes ?? []}
           onCancel={() => setPickingSubtypeFor(null)}
           onPick={async (subtype, size) => {

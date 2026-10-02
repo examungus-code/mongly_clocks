@@ -68,7 +68,7 @@ export interface Product {
 export type AdjustmentReason =
   | 'sold'
   | 'sold_component' // Decrement of a component linked to a sold product's subtype.
-                     // Hidden from the inventory log; still counts toward qty.
+  // Hidden from the inventory log; still counts toward qty.
   | 'lost'
   | 'broken'
   | 'restocked'
@@ -130,20 +130,20 @@ export interface Photo {
   file: File;
 }
 
-// Local-only, not synced. Lives in a single-row table keyed by 'session'.
-// Mirrors the currently-active SessionRecord for fast lookup and to keep
-// existing consumers working unchanged.
+// Retired: sessions were replaced by picking a festival on the Sell screen
+// (AppPrefs.current_festival_id). Local-only single row keyed by 'session';
+// still declared so existing installs keep their data and seed.ts can carry
+// an open session's festival over.
 export interface Session {
   id: 'session';
   festival_id: ID | null;
   started_at: number | null;
 }
 
-// Synced history of every session (start + festival + end). Each entry is
-// effectively one selling event (a faire day, a market, etc.). Transactions
-// are bound to a session by their occurred_at falling between
-// started_at and ended_at — we don't store session_id on the transaction
-// to avoid a schema change on Transaction.
+// Retired: history of sessions (start + festival + end) from before sessions
+// were removed. Nothing reads or writes it any more; it stays in the schema
+// and in Drive snapshots so no stored data is dropped and older app versions
+// can still pull. Every sale carries its own festival_id and timestamp.
 export interface SessionRecord {
   id: ID;
   festival_id: ID | null;
@@ -175,6 +175,12 @@ export interface AppPrefs {
    * the same kind in a row.
    */
   return_to_top_after_sale?: boolean;
+  /**
+   * Festival picked on the Sell screen; every sale is tagged with it. Null =
+   * "No festival". Undefined only on installs from before sessions were
+   * removed, until seed.ts carries over the open session's festival.
+   */
+  current_festival_id?: ID | null;
 }
 
 class ClockworkDB extends Dexie {

@@ -50,41 +50,33 @@ export function Catalogue() {
       ? buildTree(categories, products, showArchived ? 'archived' : 'active')
       : null;
 
-  // Session selector + per-product sold counts. 'total' = all sessions.
-  const sessions = useLiveQuery(() =>
-    db.session_records.orderBy('started_at').reverse().toArray()
+  // Festival selector + per-product sold counts. '' = all festivals.
+  const festivals = useLiveQuery(async () =>
+    (await db.festivals.toArray()).sort((a, b) => a.name.localeCompare(b.name))
   );
-  const festivals = useLiveQuery(() => db.festivals.toArray());
   const transactions = useLiveQuery(() => db.transactions.toArray());
   const lineItems = useLiveQuery(() => db.line_items.toArray());
-  const [selectedSession, setSelectedSession] = useState<string>('total');
+  const [selectedFestival, setSelectedFestival] = useState<ID | ''>('');
 
-  // Map<product_id, qty sold> for the currently-selected session (or all
-  // sessions if 'total'). Recomputed any time the inputs change.
+  // Map<product_id, qty sold> at the selected festival (or everywhere).
+  // Recomputed any time the inputs change.
   const soldByProduct = useMemo(() => {
     const map = new Map<ID, number>();
     if (!transactions || !lineItems) return map;
     let txIds: Set<ID> | null = null;
-    if (selectedSession !== 'total') {
-      const session = sessions?.find((s) => s.id === selectedSession);
-      if (!session) return map;
-      const start = session.started_at;
-      const end = session.ended_at ?? Infinity;
+    if (selectedFestival) {
       txIds = new Set(
         transactions
-          .filter((t) => t.occurred_at >= start && t.occurred_at <= end)
+          .filter((t) => t.festival_id === selectedFestival)
           .map((t) => t.id)
       );
     }
     for (const line of lineItems) {
       if (txIds && !txIds.has(line.transaction_id)) continue;
-      map.set(
-        line.product_id,
-        (map.get(line.product_id) ?? 0) + line.quantity
-      );
+      map.set(line.product_id, (map.get(line.product_id) ?? 0) + line.quantity);
     }
     return map;
-  }, [transactions, lineItems, sessions, selectedSession]);
+  }, [transactions, lineItems, selectedFestival]);
 
   const [selectedCat, setSelectedCat] = useState<ID | null>(null);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -135,7 +127,10 @@ export function Catalogue() {
           if (!target || target.id === aData.id) return;
           await updateProduct(aData.id, { category_id: target.category_id });
           const siblings = (
-            await db.products.where('category_id').equals(target.category_id).toArray()
+            await db.products
+              .where('category_id')
+              .equals(target.category_id)
+              .toArray()
           )
             .filter((p) => !p.archived)
             .sort((a, b) => a.sort_order - b.sort_order);
@@ -153,34 +148,19 @@ export function Catalogue() {
 
   if (!tree) return <div>Loading…</div>;
 
-  function sessionLabel(s: { festival_id: ID | null; started_at: number; ended_at: number | null }): string {
-    const festName = s.festival_id
-      ? festivals?.find((f) => f.id === s.festival_id)?.name ?? '—'
-      : '—';
-    const d = new Date(s.started_at).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    });
-    const suffix = s.ended_at === null ? ' · active' : '';
-    return `${festName} · ${d}${suffix}`;
-  }
-
   return (
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
       <div className="flex items-center gap-3 mb-3 flex-wrap">
-        <label className="text-sm font-ui text-walnut/70">
-          Session
-        </label>
+        <label className="text-sm font-ui text-walnut/70">Festival</label>
         <select
           className="input !min-h-0 !py-1.5 max-w-xs"
-          value={selectedSession}
-          onChange={(e) => setSelectedSession(e.target.value)}
+          value={selectedFestival}
+          onChange={(e) => setSelectedFestival(e.target.value)}
         >
-          <option value="total">Total (all sessions)</option>
-          {sessions?.map((s) => (
-            <option key={s.id} value={s.id}>
-              {sessionLabel(s)}
+          <option value="">All festivals</option>
+          {festivals?.map((f) => (
+            <option key={f.id} value={f.id}>
+              {f.name}
             </option>
           ))}
         </select>
@@ -291,9 +271,7 @@ export function Catalogue() {
                           : undefined
                       }
                       onHardDelete={
-                        showArchived
-                          ? () => setHardDeleteTarget(p)
-                          : undefined
+                        showArchived ? () => setHardDeleteTarget(p) : undefined
                       }
                     />
                   ))}
@@ -343,16 +321,14 @@ export function Catalogue() {
       <Confirm
         open={!!hardDeleteTarget}
         title={
-          hardDeleteTarget
-            ? `Delete "${hardDeleteTarget.name}" forever?`
-            : ''
+          hardDeleteTarget ? `Delete "${hardDeleteTarget.name}" forever?` : ''
         }
         body={
           <div className="space-y-2">
             <p>
-              The product and its photo will be permanently removed. Any
-              past sales of it will continue to exist in history but will
-              show as <em>(deleted product)</em>.
+              The product and its photo will be permanently removed. Any past
+              sales of it will continue to exist in history but will show as{' '}
+              <em>(deleted product)</em>.
             </p>
             <p>This can't be undone.</p>
           </div>
@@ -423,9 +399,7 @@ function TreeRow({
     <li>
       <div
         ref={setBeforeRef}
-        className={`h-1.5 -mb-1 rounded ${
-          isOverBefore ? 'bg-brass' : ''
-        }`}
+        className={`h-1.5 -mb-1 rounded ${isOverBefore ? 'bg-brass' : ''}`}
       />
       <div
         ref={(el) => {
@@ -456,9 +430,7 @@ function TreeRow({
           <span className="w-4" />
         )}
         <span className="flex-1 text-sm font-ui truncate">{node.name}</span>
-        <span className="text-xs text-walnut/40">
-          {countLeaves(node)}
-        </span>
+        <span className="text-xs text-walnut/40">{countLeaves(node)}</span>
         <CategoryMenu
           onRename={() => onRename(node.id)}
           onAddChild={() => onAddChild(node.id)}
@@ -507,10 +479,7 @@ function CategoryMenu({
   useEffect(() => {
     if (!open) return;
     function handleOutside(e: Event) {
-      if (
-        rootRef.current &&
-        !rootRef.current.contains(e.target as Node)
-      ) {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
         setOpen(false);
       }
     }
@@ -634,7 +603,10 @@ function ProductCard({
   });
 
   return (
-    <div ref={setBeforeRef} className={`relative ${isOver ? 'ring-2 ring-brass rounded-lg' : ''}`}>
+    <div
+      ref={setBeforeRef}
+      className={`relative ${isOver ? 'ring-2 ring-brass rounded-lg' : ''}`}
+    >
       <div
         ref={setDragRef}
         {...attributes}

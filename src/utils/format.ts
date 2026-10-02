@@ -7,6 +7,13 @@ export function fmtCurrency(n: number): string {
   return currencyFmt.format(n);
 }
 
+/** Local midnight at the start of today, as ms epoch. */
+export function startOfToday(): number {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
 export function fmtDate(ms: number): string {
   return new Date(ms).toLocaleDateString('en-US', {
     year: 'numeric',

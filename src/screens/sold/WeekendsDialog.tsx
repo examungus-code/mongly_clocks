@@ -1,32 +1,26 @@
-// Lists the weekends the Data page's per-weekend average divides by, with
-// what made each one count: days with sales and the sessions started in it.
-// Flags the two ways a weekend gets counted without real selling: a session
-// started with no sales, and a session started mid-week. Sessions with no
-// sales can be deleted from here (see domain/sessions.ts).
+// Lists the weekends the Data page's per-weekend average divides by, with the
+// days that had sales. Each day's sales can be moved to another festival, for
+// fixing sales recorded with the wrong festival picked (or tagged with a
+// festival that no longer exists).
 
-import { useEffect, useRef } from 'react';
-import type { Festival, ID, SessionRecord, Transaction } from '../../db/schema';
+import { useEffect, useRef, useState } from 'react';
+import type { Festival, ID } from '../../db/schema';
 import { parseDay, type WorkedWeekend } from '../../domain/sales-filter';
-import { deleteEmptySession, salesInSession } from '../../domain/sessions';
+import { moveDaySalesToFestival } from '../../domain/transactions';
 
 interface Props {
   weekends: WorkedWeekend[];
-  festivalsById: Map<ID, Festival>;
+  /** All festivals, sorted by name. */
+  festivals: Festival[];
   /** Show each weekend's festival (when the page isn't filtered to one). */
   showFestival: boolean;
-  /** All transactions, for counting each session's sales. */
-  transactions: Transaction[];
-  /** started_at of the session open on the Sell screen, if any. */
-  openSessionStartedAt: number | null;
   onClose: () => void;
 }
 
 export function WeekendsDialog({
   weekends,
-  festivalsById,
+  festivals,
   showFestival,
-  transactions,
-  openSessionStartedAt,
   onClose,
 }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -35,17 +29,32 @@ export function WeekendsDialog({
     if (el && !el.open) el.showModal();
   }, []);
 
-  async function handleDelete(s: SessionRecord) {
-    const when = `${fmtDay(s.started_at, true)} ${fmtTime(s.started_at)}`;
+  // `${festival_id}|${day}` of the day whose "Change festival" menu is open.
+  const [moving, setMoving] = useState<string | null>(null);
+
+  const festivalName = (id: ID | null) =>
+    id
+      ? (festivals.find((f) => f.id === id)?.name ?? '(deleted festival)')
+      : 'No festival';
+
+  async function moveDay(
+    day: string,
+    from: ID | null,
+    to: ID | null,
+    sales: number,
+    items: number
+  ) {
+    setMoving(null);
+    const what = `${sales} sale${sales === 1 ? '' : 's'} (${items} item${items === 1 ? '' : 's'})`;
     if (
       !confirm(
-        `Delete the session started ${when}? It has no sales, so no sales or inventory are affected.`
+        `Move ${what} on ${fmtDay(parseDay(day).getTime(), true)} from ${festivalName(from)} to ${festivalName(to)}? Quantities and inventory don't change.`
       )
     ) {
       return;
     }
     try {
-      await deleteEmptySession(s.id);
+      await moveDaySalesToFestival(day, from, to);
     } catch (err) {
       alert(err instanceof Error ? err.message : String(err));
     }
@@ -72,11 +81,10 @@ export function WeekendsDialog({
           </button>
         </header>
         <p className="text-xs text-walnut/70">
-          The per-weekend averages divide by this many weekends. A weekend
-          (Friday–Monday around a Saturday) counts if there was a sale in it or
-          a session was started in it. A session counts toward the weekend it
-          was started in, however long it stayed open. Sessions with no sales
-          can be deleted if they were started by mistake.
+          The per-weekend averages divide by this many weekends: every weekend
+          (Friday–Monday around a Saturday) with at least one sale. If a day's
+          sales were recorded under the wrong festival, use Change festival to
+          move them.
         </p>
 
         <ul className="divide-y divide-brass/20">
@@ -88,18 +96,22 @@ export function WeekendsDialog({
             const days = Array.from(w.itemsByDay.entries()).sort(([a], [b]) =>
               a.localeCompare(b)
             );
-            const festivalName = w.festival_id
-              ? (festivalsById.get(w.festival_id)?.name ?? '(deleted festival)')
-              : 'No festival';
             return (
               <li key={`${w.festival_id}|${w.saturday}`} className="py-2.5">
                 <div className="flex items-baseline justify-between gap-3">
                   <div className="font-ui font-medium">
                     Weekend of {fmtDay(parseDay(w.saturday).getTime(), true)}
                     {showFestival && (
-                      <span className="font-normal text-walnut/60">
+                      <span
+                        className={`font-normal ${
+                          w.festival_id &&
+                          !festivals.some((f) => f.id === w.festival_id)
+                            ? 'text-copper'
+                            : 'text-walnut/60'
+                        }`}
+                      >
                         {' '}
-                        · {festivalName}
+                        · {festivalName(w.festival_id)}
                       </span>
                     )}
                   </div>
@@ -107,67 +119,73 @@ export function WeekendsDialog({
                     {items} item{items === 1 ? '' : 's'}
                   </div>
                 </div>
-                {days.length > 0 ? (
-                  <div className="text-xs text-walnut/70 mt-0.5">
-                    Sales:{' '}
-                    {days
-                      .map(
-                        ([day, n]) =>
-                          `${fmtDay(parseDay(day).getTime())} (${n})`
-                      )
-                      .join(' · ')}
-                  </div>
-                ) : (
-                  <Flag>
-                    No sales — counted only because a session was started
-                  </Flag>
-                )}
-                {w.sessions.length > 0 && (
-                  <ul className="text-xs text-walnut/70 mt-1 space-y-1">
-                    {w.sessions.map((s) => {
-                      const isOpen = s.started_at === openSessionStartedAt;
-                      const sales = salesInSession(s, transactions);
-                      return (
-                        <li
-                          key={s.id}
-                          className="flex items-start justify-between gap-3"
-                        >
-                          <span>
-                            Session: {fmtDay(s.started_at)}{' '}
-                            {fmtTime(s.started_at)}
-                            {' → '}
-                            {isOpen
-                              ? 'open now'
-                              : s.ended_at === null
-                                ? 'never ended'
-                                : sameDay(s.started_at, s.ended_at)
-                                  ? fmtTime(s.ended_at)
-                                  : `${fmtDay(s.ended_at)} ${fmtTime(s.ended_at)}`}
-                            {' · '}
-                            {sales === 0
-                              ? 'no sales'
-                              : `${sales} sale${sales === 1 ? '' : 's'}`}
-                            {isMidweek(s.started_at) && (
-                              <span className="text-copper">
-                                {' '}
-                                · started mid-week
-                              </span>
-                            )}
-                          </span>
-                          {sales === 0 && !isOpen && (
+                <ul className="text-xs text-walnut/70 mt-1 space-y-1">
+                  {days.map(([day, dayItems]) => {
+                    const key = `${w.festival_id}|${day}`;
+                    const sales = w.salesByDay.get(day) ?? 0;
+                    return (
+                      <li
+                        key={day}
+                        className="flex items-center justify-between gap-3"
+                      >
+                        <span>
+                          {fmtDay(parseDay(day).getTime())}: {dayItems} item
+                          {dayItems === 1 ? '' : 's'}
+                        </span>
+                        {moving === key ? (
+                          <span className="flex items-center gap-1 shrink-0">
+                            <select
+                              className="input !min-h-0 !py-1 !w-auto text-xs"
+                              autoFocus
+                              value=""
+                              onChange={(e) =>
+                                void moveDay(
+                                  day,
+                                  w.festival_id,
+                                  e.target.value === '__none'
+                                    ? null
+                                    : e.target.value,
+                                  sales,
+                                  dayItems
+                                )
+                              }
+                            >
+                              <option value="" disabled>
+                                Move to…
+                              </option>
+                              {festivals
+                                .filter((f) => f.id !== w.festival_id)
+                                .map((f) => (
+                                  <option key={f.id} value={f.id}>
+                                    {f.name}
+                                  </option>
+                                ))}
+                              {w.festival_id !== null && (
+                                <option value="__none">No festival</option>
+                              )}
+                            </select>
                             <button
                               type="button"
-                              className="text-copper hover:underline shrink-0"
-                              onClick={() => handleDelete(s)}
+                              className="text-walnut/60 hover:text-walnut px-1"
+                              onClick={() => setMoving(null)}
+                              aria-label="Cancel"
                             >
-                              Delete
+                              ✕
                             </button>
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            className="text-walnut/60 hover:text-walnut hover:underline shrink-0"
+                            onClick={() => setMoving(key)}
+                          >
+                            Change festival
+                          </button>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
               </li>
             );
           })}
@@ -183,10 +201,6 @@ export function WeekendsDialog({
   );
 }
 
-function Flag({ children }: { children: React.ReactNode }) {
-  return <div className="text-xs text-copper mt-0.5">{children}</div>;
-}
-
 function fmtDay(ms: number, withYear = false): string {
   return new Date(ms).toLocaleDateString('en-US', {
     weekday: 'short',
@@ -194,21 +208,4 @@ function fmtDay(ms: number, withYear = false): string {
     day: 'numeric',
     year: withYear ? 'numeric' : undefined,
   });
-}
-
-function fmtTime(ms: number): string {
-  return new Date(ms).toLocaleTimeString('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
-
-function sameDay(a: number, b: number): boolean {
-  return new Date(a).toDateString() === new Date(b).toDateString();
-}
-
-/** Tuesday–Thursday: not a festival day, so likely started by mistake. */
-function isMidweek(ms: number): boolean {
-  const d = new Date(ms).getDay();
-  return d >= 2 && d <= 4;
 }

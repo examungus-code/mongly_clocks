@@ -1,87 +1,88 @@
 import { Link } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../../db/schema';
-import { fmtRelative } from '../../utils/format';
+import { useCurrentFestival } from '../../hooks/useCurrentFestival';
+import { fmtRelative, startOfToday } from '../../utils/format';
 
 const TILES = [
   { to: '/sell', label: 'Sell', desc: 'Record sales at the booth', icon: '🔑' },
-  { to: '/history', label: 'History', desc: 'Every inventory adjustment', icon: '🕰️' },
-  { to: '/sold', label: 'Data', desc: 'Per-product totals & export', icon: '📊' },
-  { to: '/catalogue', label: 'Catalog', desc: 'Manage designs & categories', icon: '📒' },
+  {
+    to: '/history',
+    label: 'History',
+    desc: 'Every inventory adjustment',
+    icon: '🕰️',
+  },
+  {
+    to: '/sold',
+    label: 'Data',
+    desc: 'Per-product totals & export',
+    icon: '📊',
+  },
+  {
+    to: '/catalogue',
+    label: 'Catalog',
+    desc: 'Manage designs & categories',
+    icon: '📒',
+  },
   { to: '/sync', label: 'Sync', desc: 'Push & pull from Drive', icon: '↻' },
   { to: '/settings', label: 'Settings', desc: 'Festivals & device', icon: '✦' },
 ];
 
 export function Dashboard() {
-  const session = useLiveQuery(() => db.session.get('session'));
-  const festival = useLiveQuery(
-    () => (session?.festival_id ? db.festivals.get(session.festival_id) : undefined),
-    [session?.festival_id]
-  );
+  const festival = useCurrentFestival();
   const syncMeta = useLiveQuery(() => db.sync_meta.get('sync'));
 
-  // Today's totals (since session start, or midnight if no session)
-  const since = session?.started_at ?? startOfToday();
+  // Today's totals, since local midnight.
+  const since = startOfToday();
   const todaysTx = useLiveQuery(
-    () => db.transactions.where('occurred_at').above(since).toArray(),
+    () => db.transactions.where('occurred_at').aboveOrEqual(since).toArray(),
     [since]
   );
   const itemCount = useLiveQuery(async () => {
     if (!todaysTx) return 0;
     const ids = todaysTx.map((t) => t.id);
     if (ids.length === 0) return 0;
-    const lines = await db.line_items.where('transaction_id').anyOf(ids).toArray();
+    const lines = await db.line_items
+      .where('transaction_id')
+      .anyOf(ids)
+      .toArray();
     return lines.reduce((sum, l) => sum + l.quantity, 0);
   }, [todaysTx]);
-
-  const sessionActive = !!session?.started_at;
 
   return (
     <div className="space-y-6">
       <section className="card p-6">
-        {sessionActive ? (
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <div className="text-xs uppercase tracking-wide text-brass-dark font-ui">
+              Selling at
+            </div>
+            <h2 className="text-2xl mt-1">
+              {festival.current?.name ?? 'No festival'}
+            </h2>
+            <div className="text-sm text-walnut/70 mt-1">
+              Change it at the top of the Sell screen.
+            </div>
+          </div>
+          <div className="flex gap-6 text-right">
             <div>
-              <div className="text-xs uppercase tracking-wide text-brass-dark font-ui">
-                Active session
+              <div className="text-xs uppercase text-brass-dark font-ui">
+                Items today
               </div>
-              <h2 className="text-2xl mt-1">{festival?.name ?? 'Unassigned festival'}</h2>
-              <div className="text-sm text-walnut/70 mt-1">
-                Started {session?.started_at ? fmtRelative(session.started_at) : ''}
+              <div className="text-3xl font-display text-walnut-dark">
+                {itemCount ?? 0}
               </div>
             </div>
-            <div className="flex gap-6 text-right">
-              <div>
-                <div className="text-xs uppercase text-brass-dark font-ui">
-                  Items today
-                </div>
-                <div className="text-3xl font-display text-walnut-dark">
-                  {itemCount ?? 0}
-                </div>
+            <div>
+              <div className="text-xs uppercase text-brass-dark font-ui">
+                Sales today
               </div>
-              <div>
-                <div className="text-xs uppercase text-brass-dark font-ui">
-                  Sales today
-                </div>
-                <div className="text-3xl font-display text-walnut-dark">
-                  {todaysTx?.length ?? 0}
-                </div>
+              <div className="text-3xl font-display text-walnut-dark">
+                {todaysTx?.length ?? 0}
               </div>
             </div>
           </div>
-        ) : (
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div>
-              <h2 className="text-2xl">Welcome back</h2>
-              <p className="text-sm text-walnut/70">
-                Start a session to begin recording sales at a festival.
-              </p>
-            </div>
-            <Link to="/session/start" className="btn-primary">
-              Start session
-            </Link>
-          </div>
-        )}
+        </div>
       </section>
 
       <section className="grid grid-cols-2 sm:grid-cols-3 gap-3">
@@ -92,7 +93,9 @@ export function Dashboard() {
             className="tile p-4 flex flex-col items-start gap-1"
           >
             <span className="text-2xl">{tile.icon}</span>
-            <div className="font-display text-lg leading-tight">{tile.label}</div>
+            <div className="font-display text-lg leading-tight">
+              {tile.label}
+            </div>
             <div className="text-xs text-walnut/60">{tile.desc}</div>
           </Link>
         ))}
@@ -114,10 +117,4 @@ export function Dashboard() {
       )}
     </div>
   );
-}
-
-function startOfToday(): number {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
 }

@@ -33,8 +33,8 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-// Seed must finish before any screen reads from the DB, otherwise the sell
-// screen flickers with empty payment-type lists.
+// Seed must finish before any screen reads from the DB, so the Sell screen
+// starts on the carried-over festival rather than flickering to "No festival".
 seedIfNeeded().then(() => {
   const root = createRoot(document.getElementById('root')!);
   root.render(

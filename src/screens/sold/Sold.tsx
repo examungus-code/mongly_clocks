@@ -72,8 +72,6 @@ export function Sold() {
   const componentAdjustments = useLiveQuery(() =>
     db.adjustments.where('reason').equals('sold_component').toArray()
   );
-  const sessions = useLiveQuery(() => db.session_records.toArray());
-  const openSession = useLiveQuery(() => db.session.get('session'));
   const festivals = useLiveQuery(async () =>
     (await db.festivals.toArray()).sort((a, b) => a.name.localeCompare(b.name))
   );
@@ -123,10 +121,10 @@ export function Sold() {
     return map;
   }, [transactions, lineItems, componentAdjustments, filter]);
 
-  // The weekends the per-weekend average divides by, with their sales and
-  // sessions so she can see why each one counts.
+  // The weekends the per-weekend average divides by, with their sales per
+  // day so she can see why each one counts.
   const workedWeekends = useMemo(() => {
-    if (!transactions || !sessions || !lineItems) return [];
+    if (!transactions || !lineItems) return [];
     const itemsByTx = new Map<ID, number>();
     for (const l of lineItems) {
       itemsByTx.set(
@@ -134,8 +132,8 @@ export function Sold() {
         (itemsByTx.get(l.transaction_id) ?? 0) + l.quantity
       );
     }
-    return listWeekends(filter, transactions, sessions, itemsByTx);
-  }, [transactions, sessions, lineItems, filter]);
+    return listWeekends(filter, transactions, itemsByTx);
+  }, [transactions, lineItems, filter]);
   const weekends = workedWeekends.length;
 
   // Days with a sale at the chosen festival (or any festival), marked in the
@@ -348,7 +346,7 @@ export function Sold() {
                 type="button"
                 className="underline decoration-dotted underline-offset-2 hover:text-walnut"
                 onClick={() => setShowingWeekends(true)}
-                title="See which weekends and sessions are counted"
+                title="See which weekends are counted"
               >
                 {weekends} weekend{weekends === 1 ? '' : 's'}
               </button>
@@ -430,10 +428,8 @@ export function Sold() {
       {showingWeekends && (
         <WeekendsDialog
           weekends={workedWeekends}
-          festivalsById={new Map((festivals ?? []).map((f) => [f.id, f]))}
+          festivals={festivals ?? []}
           showFestival={filter.festival_id === null}
-          transactions={transactions ?? []}
-          openSessionStartedAt={openSession?.started_at ?? null}
           onClose={() => setShowingWeekends(false)}
         />
       )}
@@ -662,7 +658,7 @@ function filterFileTag(
       range.start === range.end ? range.start : `${range.start}-to-${range.end}`
     );
   }
-  return parts.length > 0 ? parts.join('-') : 'all-sessions';
+  return parts.length > 0 ? parts.join('-') : 'all-sales';
 }
 
 /**

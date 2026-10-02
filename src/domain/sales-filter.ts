@@ -5,14 +5,13 @@
 // no restriction). Dates are local calendar days as 'YYYY-MM-DD' strings so
 // "May 3" means May 3 wherever the device is.
 //
-// Weekends: sessions are recorded per day, so per-weekend numbers group sale
-// days around each Saturday. A day belongs to the weekend of the Saturday in
-// its Tue–Mon week — so an opening Friday and a holiday Monday count with
-// their weekend. Weekends are counted per festival: two festivals on the
-// same weekend are two weekends worked. A session counts toward the weekend
-// of the day it was started, however long it stayed open.
+// Weekends: per-weekend numbers group sale days around each Saturday. A day
+// belongs to the weekend of the Saturday in its Tue–Mon week — so an opening
+// Friday and a holiday Monday count with their weekend. A weekend counts only
+// if it has a sale. Weekends are counted per festival: two festivals on the
+// same weekend are two weekends worked.
 
-import type { ID, SessionRecord, Transaction } from '../db/schema';
+import type { ID, Transaction } from '../db/schema';
 
 export interface DateRange {
   start: string;
@@ -70,55 +69,50 @@ export function transactionMatches(
   );
 }
 
-/** One weekend worked at one festival, with what made it count. */
+/** One weekend worked at one festival, with its sales per day. */
 export interface WorkedWeekend {
   festival_id: ID | null;
   /** The weekend's Saturday, 'YYYY-MM-DD'. */
   saturday: string;
   /** Items sold per day ('YYYY-MM-DD'), for days with matching sales. */
   itemsByDay: Map<string, number>;
-  /** Sessions started in this weekend, oldest first. */
-  sessions: SessionRecord[];
+  /** Number of sales (transactions) per day. */
+  salesByDay: Map<string, number>;
 }
 
 /**
- * Weekends worked under the filter, oldest first. A weekend counts if any
- * matching sale happened in it, or a session was started in it (a day at the
- * booth with no sales still counts as a day worked). The per-weekend average
- * on the Data page divides by the length of this list.
+ * Weekends worked under the filter, oldest first: every weekend with at least
+ * one matching sale. The per-weekend average on the Data page divides by the
+ * length of this list.
  */
 export function listWeekends(
   filter: SalesFilter,
   transactions: Pick<Transaction, 'id' | 'occurred_at' | 'festival_id'>[],
-  sessions: SessionRecord[],
   itemsByTransaction: Map<ID, number>
 ): WorkedWeekend[] {
   const weekends = new Map<string, WorkedWeekend>();
-  const weekendFor = (festival_id: ID | null, day: string) => {
-    if (!festivalMatches(filter, festival_id) || !dayMatches(filter, day)) {
-      return null;
-    }
-    const saturday = weekendKey(day);
-    const key = `${festival_id ?? ''}|${saturday}`;
-    let w = weekends.get(key);
-    if (!w) {
-      w = { festival_id, saturday, itemsByDay: new Map(), sessions: [] };
-      weekends.set(key, w);
-    }
-    return w;
-  };
   for (const tx of transactions) {
     const day = dayKey(tx.occurred_at);
-    const w = weekendFor(tx.festival_id, day);
-    if (!w) continue;
+    if (!festivalMatches(filter, tx.festival_id) || !dayMatches(filter, day)) {
+      continue;
+    }
+    const saturday = weekendKey(day);
+    const key = `${tx.festival_id ?? ''}|${saturday}`;
+    let w = weekends.get(key);
+    if (!w) {
+      w = {
+        festival_id: tx.festival_id,
+        saturday,
+        itemsByDay: new Map(),
+        salesByDay: new Map(),
+      };
+      weekends.set(key, w);
+    }
     const items = itemsByTransaction.get(tx.id) ?? 0;
     w.itemsByDay.set(day, (w.itemsByDay.get(day) ?? 0) + items);
-  }
-  for (const s of sessions) {
-    weekendFor(s.festival_id, dayKey(s.started_at))?.sessions.push(s);
+    w.salesByDay.set(day, (w.salesByDay.get(day) ?? 0) + 1);
   }
   const list = Array.from(weekends.values());
-  for (const w of list) w.sessions.sort((a, b) => a.started_at - b.started_at);
   list.sort(
     (a, b) =>
       a.saturday.localeCompare(b.saturday) ||

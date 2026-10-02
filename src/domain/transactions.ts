@@ -17,6 +17,7 @@ import {
   type TransactionLineItem,
 } from '../db/schema';
 import { resolveSubtypeConfigAsync } from './catalogue';
+import { dayKey, parseDay } from './sales-filter';
 
 export interface SaleLine {
   product_id: ID;
@@ -168,8 +169,7 @@ export async function completeTransaction(
         };
         if (line.size && (product.sizes ?? []).includes(line.size)) {
           const nextStock = { ...(product.size_stock ?? {}) };
-          nextStock[line.size] =
-            (nextStock[line.size] ?? 0) - line.quantity;
+          nextStock[line.size] = (nextStock[line.size] ?? 0) - line.quantity;
           productPatch.size_stock = nextStock;
         }
         await db.products.update(line.product_id, productPatch);
@@ -180,7 +180,8 @@ export async function completeTransaction(
         // resolve through category inheritance: if the product has no
         // subtype_links of its own, walk up to the closest category that
         // defines them.
-        const { subtype_links: links } = await resolveSubtypeConfigAsync(product);
+        const { subtype_links: links } =
+          await resolveSubtypeConfigAsync(product);
         const componentId =
           line.subtype && links[line.subtype] ? links[line.subtype] : null;
         if (componentId) {
@@ -294,4 +295,35 @@ export async function changeLineItemSubtype(
       await db.line_items.update(line_item_id, { subtype: new_subtype });
     }
   );
+}
+
+/**
+ * Re-tag every sale made on one calendar day ('YYYY-MM-DD') at one festival
+ * so it belongs to another festival — for fixing sales recorded with the
+ * wrong festival picked, or tagged with a festival that no longer exists.
+ * Only Transaction.festival_id changes: line items, adjustments and
+ * quantities are untouched. Returns the number of sales moved.
+ */
+export async function moveDaySalesToFestival(
+  day: string,
+  from_festival_id: ID | null,
+  to_festival_id: ID | null
+): Promise<number> {
+  const start = parseDay(day);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return db.transaction('rw', db.transactions, async () => {
+    const sales = await db.transactions
+      .where('occurred_at')
+      .between(start.getTime(), end.getTime(), true, false)
+      .filter(
+        (t) =>
+          t.festival_id === from_festival_id && dayKey(t.occurred_at) === day
+      )
+      .toArray();
+    for (const t of sales) {
+      await db.transactions.update(t.id, { festival_id: to_festival_id });
+    }
+    return sales.length;
+  });
 }
