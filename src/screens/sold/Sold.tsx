@@ -40,11 +40,26 @@ interface SoldTotals {
 
 type SortOrder = 'catalog' | 'most' | 'fewest';
 
+// 'none' drops the category rows and lists every product in one flat list,
+// ordered by the product sort.
+type CategorySortOrder = SortOrder | 'none';
+
 const SORT_OPTIONS: { value: SortOrder; label: string }[] = [
   { value: 'catalog', label: 'Catalog order' },
   { value: 'most', label: 'Most sold first' },
   { value: 'fewest', label: 'Fewest sold first' },
 ];
+
+const CATEGORY_SORT_OPTIONS: { value: CategorySortOrder; label: string }[] = [
+  ...SORT_OPTIONS,
+  { value: 'none', label: 'None (products only)' },
+];
+
+interface FlatProduct {
+  product: Product;
+  /** Category names from the root down to the product's category. */
+  path: string[];
+}
 
 export function Sold() {
   const categories = useLiveQuery(() => db.categories.toArray());
@@ -66,7 +81,8 @@ export function Sold() {
     range: null,
   });
   const [pickingRange, setPickingRange] = useState(false);
-  const [categorySort, setCategorySort] = useState<SortOrder>('catalog');
+  const [categorySort, setCategorySort] =
+    useState<CategorySortOrder>('catalog');
   const [productSort, setProductSort] = useState<SortOrder>('catalog');
   const [collapsed, setCollapsed] = useState<Set<ID>>(new Set());
 
@@ -132,9 +148,13 @@ export function Sold() {
   // apply the two sort orders. Sorting is stable, so ties keep catalog
   // order. We include ALL products (even archived ones with past sales) so
   // historical numbers stay accurate. Empty categories still render so the
-  // structure stays predictable.
-  const { tree, categoryTotals } = useMemo(() => {
-    if (!categories || !products) return { tree: null, categoryTotals: null };
+  // structure stays predictable. `flat` is every product in catalog order
+  // (tree order), then sorted by the product sort — used when the category
+  // sort is 'none'.
+  const { tree, categoryTotals, flat } = useMemo(() => {
+    if (!categories || !products) {
+      return { tree: null, categoryTotals: null, flat: null };
+    }
     const roots = buildTreeIncludingArchived(categories, products);
     const totals = new Map<ID, number>();
     const productTotal = (p: Product) => soldByProduct.get(p.id)?.total ?? 0;
@@ -146,15 +166,28 @@ export function Sold() {
       return sum;
     }
     roots.forEach(total);
-    function sortRec(list: CategoryNode[]) {
-      sortBySold(list, categorySort, (n) => totals.get(n.id) ?? 0);
-      for (const n of list) {
-        sortBySold(n.products, productSort, productTotal);
-        sortRec(n.children);
-      }
+
+    const flatList: FlatProduct[] = [];
+    function flatten(node: CategoryNode, path: string[]) {
+      const here = [...path, node.name];
+      for (const p of node.products) flatList.push({ product: p, path: here });
+      for (const c of node.children) flatten(c, here);
     }
-    sortRec(roots);
-    return { tree: roots, categoryTotals: totals };
+    roots.forEach((n) => flatten(n, []));
+    sortBySold(flatList, productSort, (f) => productTotal(f.product));
+
+    if (categorySort !== 'none') {
+      const order = categorySort;
+      function sortRec(list: CategoryNode[]) {
+        sortBySold(list, order, (n) => totals.get(n.id) ?? 0);
+        for (const n of list) {
+          sortBySold(n.products, productSort, productTotal);
+          sortRec(n.children);
+        }
+      }
+      sortRec(roots);
+    }
+    return { tree: roots, categoryTotals: totals, flat: flatList };
   }, [categories, products, soldByProduct, categorySort, productSort]);
 
   function toggle(id: ID) {
@@ -167,11 +200,11 @@ export function Sold() {
   }
 
   function exportCsv() {
-    if (!tree) return;
+    if (!tree || !flat) return;
     // CSV rows: full category path + product + size (when applicable) +
     // quantity (+ per-weekend average). Sized products emit one row per size
     // that had sales; everything else emits one row per product. Rows follow
-    // the on-screen sort order.
+    // the on-screen sort order (flat when the category sort is 'none').
     const rows: Record<string, unknown>[] = [];
     function push(path: string[], product: string, size: string, qty: number) {
       rows.push({
@@ -182,41 +215,46 @@ export function Sold() {
         avg_per_weekend: fmtAvg(qty, weekends),
       });
     }
+    function emit(p: Product, path: string[]) {
+      const entry = soldByProduct.get(p.id);
+      if (!entry || entry.total === 0) return;
+      const productSizes = p.sizes ?? [];
+      if (productSizes.length > 0 && entry.bySize.size > 0) {
+        // Preserve the product's declared size order, then any that
+        // slipped in from historical data (e.g. renamed sizes).
+        const ordered = [
+          ...productSizes.filter((s) => entry.bySize.has(s)),
+          ...Array.from(entry.bySize.keys()).filter(
+            (s) => !productSizes.includes(s)
+          ),
+        ];
+        for (const size of ordered) {
+          const qty = entry.bySize.get(size) ?? 0;
+          if (qty === 0) continue;
+          push(path, p.name, size, qty);
+        }
+        // Any unsized quantity on a sized product (component decrements
+        // or legacy line items) still needs to be represented.
+        const sizedQty = Array.from(entry.bySize.values()).reduce(
+          (a, b) => a + b,
+          0
+        );
+        const remainder = entry.total - sizedQty;
+        if (remainder !== 0) push(path, p.name, '', remainder);
+      } else {
+        push(path, p.name, '', entry.total);
+      }
+    }
     function walk(node: CategoryNode, path: string[]) {
       const here = [...path, node.name];
-      for (const p of node.products) {
-        const entry = soldByProduct.get(p.id);
-        if (!entry || entry.total === 0) continue;
-        const productSizes = p.sizes ?? [];
-        if (productSizes.length > 0 && entry.bySize.size > 0) {
-          // Preserve the product's declared size order, then any that
-          // slipped in from historical data (e.g. renamed sizes).
-          const ordered = [
-            ...productSizes.filter((s) => entry.bySize.has(s)),
-            ...Array.from(entry.bySize.keys()).filter(
-              (s) => !productSizes.includes(s)
-            ),
-          ];
-          for (const size of ordered) {
-            const qty = entry.bySize.get(size) ?? 0;
-            if (qty === 0) continue;
-            push(here, p.name, size, qty);
-          }
-          // Any unsized quantity on a sized product (component decrements
-          // or legacy line items) still needs to be represented.
-          const sizedQty = Array.from(entry.bySize.values()).reduce(
-            (a, b) => a + b,
-            0
-          );
-          const remainder = entry.total - sizedQty;
-          if (remainder !== 0) push(here, p.name, '', remainder);
-        } else {
-          push(here, p.name, '', entry.total);
-        }
-      }
+      for (const p of node.products) emit(p, here);
       for (const c of node.children) walk(c, here);
     }
-    for (const n of tree) walk(n, []);
+    if (categorySort === 'none') {
+      for (const f of flat) emit(f.product, f.path);
+    } else {
+      for (const n of tree) walk(n, []);
+    }
     if (rows.length === 0) return;
     const columns = ['category', 'product', 'size', 'quantity'];
     if (weekends > 0) columns.push('avg_per_weekend');
@@ -307,9 +345,11 @@ export function Sold() {
           <select
             className="input !min-h-0 !py-1.5 !w-auto"
             value={categorySort}
-            onChange={(e) => setCategorySort(e.target.value as SortOrder)}
+            onChange={(e) =>
+              setCategorySort(e.target.value as CategorySortOrder)
+            }
           >
-            {SORT_OPTIONS.map((o) => (
+            {CATEGORY_SORT_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
               </option>
@@ -343,18 +383,29 @@ export function Sold() {
               {weekends > 0 ? 'Avg / wknd' : ''}
             </span>
           </div>
-          {tree.map((node) => (
-            <Row
-              key={node.id}
-              node={node}
-              depth={0}
-              soldByProduct={soldByProduct}
-              categoryTotals={categoryTotals}
-              weekends={weekends}
-              collapsed={collapsed}
-              onToggle={toggle}
-            />
-          ))}
+          {categorySort === 'none'
+            ? flat?.map((f) => (
+                <ProductLine
+                  key={f.product.id}
+                  product={f.product}
+                  path={f.path}
+                  entry={soldByProduct.get(f.product.id)}
+                  weekends={weekends}
+                  indent={12}
+                />
+              ))
+            : tree.map((node) => (
+                <Row
+                  key={node.id}
+                  node={node}
+                  depth={0}
+                  soldByProduct={soldByProduct}
+                  categoryTotals={categoryTotals}
+                  weekends={weekends}
+                  collapsed={collapsed}
+                  onToggle={toggle}
+                />
+              ))}
         </div>
       )}
 
@@ -444,11 +495,14 @@ function Row({
 
 function ProductLine({
   product,
+  path,
   entry,
   weekends,
   indent,
 }: {
   product: Product;
+  /** Category path, shown under the name in the flat (no-category) list. */
+  path?: string[];
   entry: SoldTotals | undefined;
   weekends: number;
   indent: number;
@@ -488,13 +542,20 @@ function ProductLine({
         className="grid grid-cols-[1fr_3rem_4.5rem] gap-3 items-center px-3 py-1.5 text-sm"
         style={{ paddingLeft: indent }}
       >
-        <span className="flex items-center gap-1 truncate">
-          <span className="text-walnut/30 text-xs w-3 inline-block">◦</span>
-          <span className={product.archived ? 'text-walnut/50 italic' : ''}>
-            {product.name}
-            {product.archived && ' (archived)'}
+        <div className="min-w-0">
+          <span className="flex items-center gap-1 truncate">
+            <span className="text-walnut/30 text-xs w-3 inline-block">◦</span>
+            <span className={product.archived ? 'text-walnut/50 italic' : ''}>
+              {product.name}
+              {product.archived && ' (archived)'}
+            </span>
           </span>
-        </span>
+          {path && (
+            <div className="text-[11px] text-walnut/50 truncate pl-4">
+              {path.join(' / ')}
+            </div>
+          )}
+        </div>
         <Counts qty={qty} weekends={weekends} />
       </div>
       {sizedRows.length > 0 &&
