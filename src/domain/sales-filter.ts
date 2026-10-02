@@ -8,8 +8,9 @@
 // Weekends: per-weekend numbers group sale days around each Saturday. A day
 // belongs to the weekend of the Saturday in its Tue–Mon week — so an opening
 // Friday and a holiday Monday count with their weekend. A weekend counts only
-// if it has a sale. Weekends are counted per festival: two festivals on the
-// same weekend are two weekends worked.
+// if it has a sale, and counts once even when booths ran at more than one
+// festival that weekend — so with all festivals selected, the average is the
+// whole business's items per calendar weekend.
 
 import type { ID, Transaction } from '../db/schema';
 
@@ -69,20 +70,27 @@ export function transactionMatches(
   );
 }
 
-/** One weekend worked at one festival, with its sales per day. */
-export interface WorkedWeekend {
+/** Sales on one day at one festival. */
+export interface WeekendDay {
+  day: string; // 'YYYY-MM-DD'
   festival_id: ID | null;
+  items: number;
+  /** Number of sales (transactions). */
+  sales: number;
+}
+
+/** One calendar weekend with at least one matching sale. */
+export interface WorkedWeekend {
   /** The weekend's Saturday, 'YYYY-MM-DD'. */
   saturday: string;
-  /** Items sold per day ('YYYY-MM-DD'), for days with matching sales. */
-  itemsByDay: Map<string, number>;
-  /** Number of sales (transactions) per day. */
-  salesByDay: Map<string, number>;
+  /** Sales per day and festival, by day then festival. */
+  days: WeekendDay[];
 }
 
 /**
- * Weekends worked under the filter, oldest first: every weekend with at least
- * one matching sale. The per-weekend average on the Data page divides by the
+ * Weekends worked under the filter, oldest first: every calendar weekend with
+ * at least one matching sale, counted once however many festivals its sales
+ * are tagged with. The per-weekend average on the Data page divides by the
  * length of this list.
  */
 export function listWeekends(
@@ -90,33 +98,35 @@ export function listWeekends(
   transactions: Pick<Transaction, 'id' | 'occurred_at' | 'festival_id'>[],
   itemsByTransaction: Map<ID, number>
 ): WorkedWeekend[] {
-  const weekends = new Map<string, WorkedWeekend>();
+  const weekends = new Map<string, Map<string, WeekendDay>>();
   for (const tx of transactions) {
     const day = dayKey(tx.occurred_at);
     if (!festivalMatches(filter, tx.festival_id) || !dayMatches(filter, day)) {
       continue;
     }
     const saturday = weekendKey(day);
-    const key = `${tx.festival_id ?? ''}|${saturday}`;
-    let w = weekends.get(key);
-    if (!w) {
-      w = {
-        festival_id: tx.festival_id,
-        saturday,
-        itemsByDay: new Map(),
-        salesByDay: new Map(),
-      };
-      weekends.set(key, w);
+    let days = weekends.get(saturday);
+    if (!days) {
+      days = new Map();
+      weekends.set(saturday, days);
     }
-    const items = itemsByTransaction.get(tx.id) ?? 0;
-    w.itemsByDay.set(day, (w.itemsByDay.get(day) ?? 0) + items);
-    w.salesByDay.set(day, (w.salesByDay.get(day) ?? 0) + 1);
+    const key = `${day}|${tx.festival_id ?? ''}`;
+    let d = days.get(key);
+    if (!d) {
+      d = { day, festival_id: tx.festival_id, items: 0, sales: 0 };
+      days.set(key, d);
+    }
+    d.items += itemsByTransaction.get(tx.id) ?? 0;
+    d.sales += 1;
   }
-  const list = Array.from(weekends.values());
-  list.sort(
-    (a, b) =>
-      a.saturday.localeCompare(b.saturday) ||
-      String(a.festival_id).localeCompare(String(b.festival_id))
-  );
-  return list;
+  return Array.from(weekends.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([saturday, days]) => ({
+      saturday,
+      days: Array.from(days.values()).sort(
+        (a, b) =>
+          a.day.localeCompare(b.day) ||
+          String(a.festival_id).localeCompare(String(b.festival_id))
+      ),
+    }));
 }

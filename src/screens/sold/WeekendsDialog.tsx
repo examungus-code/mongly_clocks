@@ -82,109 +82,104 @@ export function WeekendsDialog({
         </header>
         <p className="text-xs text-walnut/70">
           The per-weekend averages divide by this many weekends: every weekend
-          (Friday–Monday around a Saturday) with at least one sale. If a day's
-          sales were recorded under the wrong festival, use Change festival to
-          move them.
+          (Friday–Monday around a Saturday) with at least one sale. A weekend
+          with booths at more than one festival counts once. If a day's sales
+          were recorded under the wrong festival, use Change festival to move
+          them.
         </p>
 
         <ul className="divide-y divide-brass/20">
           {weekends.map((w) => {
-            const items = Array.from(w.itemsByDay.values()).reduce(
-              (a, b) => a + b,
-              0
-            );
-            const days = Array.from(w.itemsByDay.entries()).sort(([a], [b]) =>
-              a.localeCompare(b)
-            );
+            const items = w.days.reduce((sum, d) => sum + d.items, 0);
+            const festivalCount = new Set(w.days.map((d) => d.festival_id))
+              .size;
             return (
-              <li key={`${w.festival_id}|${w.saturday}`} className="py-2.5">
+              <li key={w.saturday} className="py-2.5">
                 <div className="flex items-baseline justify-between gap-3">
                   <div className="font-ui font-medium">
                     Weekend of {fmtDay(parseDay(w.saturday).getTime(), true)}
-                    {showFestival && (
-                      <span
-                        className={`font-normal ${
-                          w.festival_id &&
-                          !festivals.some((f) => f.id === w.festival_id)
-                            ? 'text-copper'
-                            : 'text-walnut/60'
-                        }`}
-                      >
-                        {' '}
-                        · {festivalName(w.festival_id)}
-                      </span>
-                    )}
                   </div>
                   <div className="text-sm tabular-nums text-walnut/70 shrink-0">
                     {items} item{items === 1 ? '' : 's'}
                   </div>
                 </div>
                 <ul className="text-xs text-walnut/70 mt-1 space-y-1">
-                  {days.map(([day, dayItems]) => {
-                    const key = `${w.festival_id}|${day}`;
-                    const sales = w.salesByDay.get(day) ?? 0;
-                    return (
-                      <li
-                        key={day}
-                        className="flex items-center justify-between gap-3"
-                      >
-                        <span>
-                          {fmtDay(parseDay(day).getTime())}: {dayItems} item
-                          {dayItems === 1 ? '' : 's'}
-                        </span>
-                        {moving === key ? (
-                          <span className="flex items-center gap-1 shrink-0">
-                            <select
-                              className="input !min-h-0 !py-1 !w-auto text-xs"
-                              autoFocus
-                              value=""
-                              onChange={(e) =>
-                                void moveDay(
-                                  day,
-                                  w.festival_id,
-                                  e.target.value === '__none'
-                                    ? null
-                                    : e.target.value,
-                                  sales,
-                                  dayItems
-                                )
-                              }
-                            >
-                              <option value="" disabled>
-                                Move to…
-                              </option>
-                              {festivals
-                                .filter((f) => f.id !== w.festival_id)
-                                .map((f) => (
-                                  <option key={f.id} value={f.id}>
-                                    {f.name}
-                                  </option>
-                                ))}
-                              {w.festival_id !== null && (
-                                <option value="__none">No festival</option>
-                              )}
-                            </select>
+                  {w.days.map(
+                    ({ day, festival_id, items: dayItems, sales }) => {
+                      const key = `${festival_id}|${day}`;
+                      const unknown =
+                        festival_id !== null &&
+                        !festivals.some((f) => f.id === festival_id);
+                      return (
+                        <li
+                          key={key}
+                          className="flex items-center justify-between gap-3"
+                        >
+                          <span>
+                            {fmtDay(parseDay(day).getTime())}
+                            {(showFestival || festivalCount > 1) && (
+                              <span className={unknown ? 'text-copper' : ''}>
+                                {' '}
+                                · {festivalName(festival_id)}
+                              </span>
+                            )}
+                            : {dayItems} item
+                            {dayItems === 1 ? '' : 's'}
+                          </span>
+                          {moving === key ? (
+                            <span className="flex items-center gap-1 shrink-0">
+                              <select
+                                className="input !min-h-0 !py-1 !w-auto text-xs"
+                                autoFocus
+                                value=""
+                                onChange={(e) =>
+                                  void moveDay(
+                                    day,
+                                    festival_id,
+                                    e.target.value === '__none'
+                                      ? null
+                                      : e.target.value,
+                                    sales,
+                                    dayItems
+                                  )
+                                }
+                              >
+                                <option value="" disabled>
+                                  Move to…
+                                </option>
+                                {festivals
+                                  .filter((f) => f.id !== festival_id)
+                                  .map((f) => (
+                                    <option key={f.id} value={f.id}>
+                                      {f.name}
+                                    </option>
+                                  ))}
+                                {festival_id !== null && (
+                                  <option value="__none">No festival</option>
+                                )}
+                              </select>
+                              <button
+                                type="button"
+                                className="text-walnut/60 hover:text-walnut px-1"
+                                onClick={() => setMoving(null)}
+                                aria-label="Cancel"
+                              >
+                                ✕
+                              </button>
+                            </span>
+                          ) : (
                             <button
                               type="button"
-                              className="text-walnut/60 hover:text-walnut px-1"
-                              onClick={() => setMoving(null)}
-                              aria-label="Cancel"
+                              className="text-walnut/60 hover:text-walnut hover:underline shrink-0"
+                              onClick={() => setMoving(key)}
                             >
-                              ✕
+                              Change festival
                             </button>
-                          </span>
-                        ) : (
-                          <button
-                            type="button"
-                            className="text-walnut/60 hover:text-walnut hover:underline shrink-0"
-                            onClick={() => setMoving(key)}
-                          >
-                            Change festival
-                          </button>
-                        )}
-                      </li>
-                    );
-                  })}
+                          )}
+                        </li>
+                      );
+                    }
+                  )}
                 </ul>
               </li>
             );
