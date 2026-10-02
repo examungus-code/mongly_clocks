@@ -23,13 +23,14 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type Festival, type ID, type Product } from '../../db/schema';
 import { type CategoryNode } from '../../domain/catalogue';
 import {
-  countWeekends,
+  listWeekends,
   dayKey,
   parseDay,
   transactionMatches,
   type SalesFilter,
 } from '../../domain/sales-filter';
 import { DateRangePicker } from '../../components/DateRangePicker';
+import { WeekendsDialog } from './WeekendsDialog';
 import { downloadCsv, toCsv } from '../../utils/csv-export';
 import { fmtDate } from '../../utils/format';
 
@@ -81,6 +82,7 @@ export function Sold() {
     range: null,
   });
   const [pickingRange, setPickingRange] = useState(false);
+  const [showingWeekends, setShowingWeekends] = useState(false);
   const [categorySort, setCategorySort] =
     useState<CategorySortOrder>('catalog');
   const [productSort, setProductSort] = useState<SortOrder>('catalog');
@@ -120,13 +122,20 @@ export function Sold() {
     return map;
   }, [transactions, lineItems, componentAdjustments, filter]);
 
-  const weekends = useMemo(
-    () =>
-      transactions && sessions
-        ? countWeekends(filter, transactions, sessions)
-        : 0,
-    [transactions, sessions, filter]
-  );
+  // The weekends the per-weekend average divides by, with their sales and
+  // sessions so she can see why each one counts.
+  const workedWeekends = useMemo(() => {
+    if (!transactions || !sessions || !lineItems) return [];
+    const itemsByTx = new Map<ID, number>();
+    for (const l of lineItems) {
+      itemsByTx.set(
+        l.transaction_id,
+        (itemsByTx.get(l.transaction_id) ?? 0) + l.quantity
+      );
+    }
+    return listWeekends(filter, transactions, sessions, itemsByTx);
+  }, [transactions, sessions, lineItems, filter]);
+  const weekends = workedWeekends.length;
 
   // Days with a sale at the chosen festival (or any festival), marked in the
   // calendar so that festival's weekends stand out.
@@ -333,7 +342,15 @@ export function Sold() {
           {weekends > 0 && (
             <>
               {' '}
-              over {weekends} weekend{weekends === 1 ? '' : 's'}
+              over{' '}
+              <button
+                type="button"
+                className="underline decoration-dotted underline-offset-2 hover:text-walnut"
+                onClick={() => setShowingWeekends(true)}
+                title="See which weekends and sessions are counted"
+              >
+                {weekends} weekend{weekends === 1 ? '' : 's'}
+              </button>
             </>
           )}
         </span>
@@ -407,6 +424,15 @@ export function Sold() {
                 />
               ))}
         </div>
+      )}
+
+      {showingWeekends && (
+        <WeekendsDialog
+          weekends={workedWeekends}
+          festivalsById={new Map((festivals ?? []).map((f) => [f.id, f]))}
+          showFestival={filter.festival_id === null}
+          onClose={() => setShowingWeekends(false)}
+        />
       )}
 
       {pickingRange && (
